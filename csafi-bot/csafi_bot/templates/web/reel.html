@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}{{ r.topic or ("Reel #" ~ r.id) }} · CSAFI Reels Library{% endblock %}
+{% block content %}
+<p><a href="/" class="muted small">← All reels</a></p>
+<section class="reel-head" data-reel="{{ r.id }}" data-status="{{ r.status }}">
+  <div>
+    <h1>{{ r.topic or ("Reel #" ~ r.id) }}</h1>
+    <p class="muted">
+      {% if r.creator %}@{{ r.creator }} · {% endif %}
+      {% if r.duration_s %}{{ r.duration_s }} s · {% endif %}
+      {% if r.processing_s %}processed in {{ r.processing_s|round|int }} s · {% endif %}
+      <code>{{ r.reel_key }}</code>
+    </p>
+    {% if r.source_url %}<p class="small"><a href="{{ r.source_url }}" rel="noopener noreferrer" target="_blank">Open on Instagram</a></p>{% endif %}
+  </div>
+  <div class="actions">
+    <span class="badge {{ r.status }}">{% if r.id == current %}{{ r.stage or r.status }}…{% else %}{{ r.status }}{% endif %}</span>
+    {% if r.status in ("failed", "filed", "duplicate") %}
+    <form method="post" action="/reel/{{ r.id }}/retry"><button class="btn small" type="submit">{{ "Retry" if r.status == "failed" else "Re-run" }}</button></form>
+    {% endif %}
+  </div>
+</section>
+
+{% if r.status == "failed" %}
+<p class="alert error">Failed at <b>{{ r.stage }}</b>: {{ r.error }}</p>
+{% elif r.status == "duplicate" %}
+<p class="alert">This is the same video as <a href="/reel/{{ r.duplicate_of }}">reel #{{ r.duplicate_of }}</a>, so it was not filed again.</p>
+{% elif r.status not in ("filed",) %}
+<p class="alert">This reel is being processed. This page refreshes on its own.</p>
+{% endif %}
+
+{% if folder %}
+<p class="muted small">Folder: <code>{{ folder }}</code></p>
+<div class="tabs" role="tablist">
+  <button role="tab" aria-selected="true" data-tab="readme">Breakdown</button>
+  <button role="tab" aria-selected="false" data-tab="resources">Resources</button>
+  {% if has_video %}<button role="tab" aria-selected="false" data-tab="video">Video</button>{% endif %}
+  <button role="tab" aria-selected="false" data-tab="manifest">Manifest</button>
+  <button role="tab" aria-selected="false" data-tab="activity">Activity</button>
+</div>
+<article class="panel md" data-panel="readme">{{ docs.readme|safe }}</article>
+<article class="panel md" data-panel="resources" hidden>{{ docs.resources|safe }}</article>
+{% if has_video %}<article class="panel" data-panel="video" hidden><video controls preload="metadata" src="/reel/{{ r.id }}/video"></video></article>{% endif %}
+<article class="panel md" data-panel="manifest" hidden>{{ docs.manifest|safe }}</article>
+<article class="panel" data-panel="activity" hidden>{% include "_events.html" %}</article>
+{% else %}
+<h2>Activity</h2>
+{% include "_events.html" %}
+{% endif %}
+{% endblock %}

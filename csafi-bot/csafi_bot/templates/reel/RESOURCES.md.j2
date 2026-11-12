@@ -1,0 +1,38 @@
+# Resources - {{ a.title_topic }}
+
+- **Reel:** {{ reel_url or "not available" }}
+- **Creator:** {{ "@" ~ a.creator_handle if a.creator_handle else "unknown" }}
+
+Links below were extracted by code from the caption, on-screen text and transcript. The AI only
+adds the "how to use" notes. Nothing here was invented.
+
+{% set linked = resources|selectattr("url")|list -%}
+{% set named = resources|rejectattr("url")|list -%}
+## Links
+{% if linked -%}
+| Name | Kind | Link | Found in | How to use |
+| --- | --- | --- | --- | --- |
+{% for r in linked -%}
+| {{ r.name|cell }} | {{ r.kind|cell }} | <{{ r.url }}> | {{ r.found_in|cell }} | {{ r.how_to_use|cell or "-" }} |
+{% endfor %}
+{%- else -%}
+_No links were visible or spoken in this reel._
+{% endif %}
+{% if named -%}
+## Named without a link
+| Name | Kind | How to use |
+| --- | --- | --- |
+{% for r in named -%}
+| {{ r.name|cell }} | {{ r.kind|cell }} | {{ r.how_to_use|cell or "-" }} |
+{% endfor %}
+{% endif %}
+## Gaps
+{% if a.call_to_action.type in ("comment", "dm") -%}
+- The creator offers the resource by {{ a.call_to_action.type }}{% if a.call_to_action.keyword_if_any %} (keyword `{{ a.call_to_action.keyword_if_any }}`){% endif %}. The bot does not comment or send DMs, so this resource must be requested by hand.
+{% endif -%}
+{% if not linked -%}
+- Check the creator's bio or link-in-bio page on Instagram for anything not shown in the reel.
+{% endif -%}
+{% if a.call_to_action.type not in ("comment", "dm") and linked -%}
+- None noted.
+{% endif %}

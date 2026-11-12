@@ -1,0 +1,9 @@
+{% if events %}
+<ol class="events">
+  {% for e in events %}
+  <li class="{{ e.level }}"><time datetime="{{ e.ts }}">{{ e.ts[11:19] }} UTC</time> {{ e.message }}</li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="muted">No activity yet.</p>
+{% endif %}

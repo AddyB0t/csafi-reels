@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block topright %}
+<div class="topright">
+  <span class="ai-status" id="ai-status" title="AI backend">{{ ai }}</span>
+  {% if auth %}<form method="post" action="/logout"><button class="btn ghost small" type="submit">Sign out</button></form>{% endif %}
+</div>
+{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <h1>Reel library</h1>
+    <p class="muted">Forward a reel to the Business account, send it to the Telegram bot, or paste the link here.</p>
+  </div>
+  <form method="post" action="/add" class="add">
+    <label class="sr-only" for="url">Instagram reel link</label>
+    <input id="url" name="url" type="url" required placeholder="https://www.instagram.com/reel/..." autocomplete="off">
+    <button class="btn primary" type="submit">Add reel</button>
+  </form>
+</section>
+
+{% if added %}
+{% set parts = added.split("-", 1) %}
+<p class="alert ok" role="status">Reel #{{ parts[0] }} {{ "is queued. It will appear below when it is filed." if parts[1] == "queued" else "is already in the library." }}</p>
+{% endif %}
+{% if error %}<p class="alert error" role="alert">{{ error }}</p>{% endif %}
+
+<section class="stats" aria-label="Library status" id="stats">
+  <div class="stat"><b data-count="filed">{{ counts.filed }}</b><span>Filed</span></div>
+  <div class="stat"><b data-count="active">{{ counts.queued + counts.downloading + counts.analysing + counts.writing }}</b><span>In queue</span></div>
+  <div class="stat"><b data-count="failed" class="{{ 'bad' if counts.failed else '' }}">{{ counts.failed }}</b><span>Failed</span></div>
+  <div class="stat"><b data-count="duplicate">{{ counts.duplicate }}</b><span>Duplicates skipped</span></div>
+</section>
+
+<form class="filters" method="get" action="/" id="filters">
+  <label class="sr-only" for="q">Search</label>
+  <input id="q" name="q" type="search" value="{{ q }}" placeholder="Search topic, creator, tags, links...">
+  <label class="sr-only" for="status">Status</label>
+  <select id="status" name="status">
+    <option value="">All statuses</option>
+    {% for st in statuses %}<option value="{{ st }}" {{ "selected" if st == status }}>{{ st|capitalize }}</option>{% endfor %}
+  </select>
+</form>
+
+<div id="rows" data-src="/partials/reels?q={{ q|urlencode }}&status={{ status|urlencode }}&page={{ page }}">
+  {% include "_rows.html" %}
+</div>
+<p class="muted small foot">Library folder: <code>{{ library_dir }}</code></p>
+{% endblock %}

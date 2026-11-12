@@ -1,0 +1,12 @@
+# CPU-only override. Slow (expect 10+ minutes per reel) but works anywhere.
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+services:
+  ollama:
+    deploy: !reset {}
+  bot:
+    build:
+      args:
+        WHISPER_GPU: "0"
+    environment:
+      WHISPER_DEVICE: cpu
+    deploy: !reset {}

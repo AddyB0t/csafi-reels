@@ -1,0 +1,14 @@
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+httpx==0.28.1
+pydantic==2.14.3
+pydantic-settings==2.16.2
+jinja2==3.1.6
+python-multipart==0.0.33
+markdown-it-py==4.2.0
+nh3==0.3.7
+yt-dlp==2026.10.26
+faster-whisper==1.2.1
+scenedetect==0.7.3
+opencv-python-headless>=4.10,<5
+rapidocr-onnxruntime==1.4.4

@@ -1,0 +1,11 @@
+# Manifest - {{ folder }}
+
+- **Reel ID:** `{{ reel_key }}`
+- **Creator:** {{ "@" ~ a.creator_handle if a.creator_handle else "unknown" }}
+- **Reel:** {{ reel_url or "not available" }}
+
+| File | What it is |
+| --- | --- |
+{% for f in files -%}
+| {{ f.name|cell }} | {{ f.desc|cell }} |
+{% endfor %}

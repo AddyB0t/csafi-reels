@@ -1,0 +1,9 @@
+[project]
+name = "csafi-bot"
+version = "1.0.0"
+description = "Local, zero-cost Instagram reels library: Meta webhook, Whisper, OCR and Ollama into a searchable folder library."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

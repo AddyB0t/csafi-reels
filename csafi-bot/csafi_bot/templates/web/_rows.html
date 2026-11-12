@@ -1,0 +1,36 @@
+{% if reels %}
+<div class="table-wrap">
+<table class="reels">
+  <thead><tr><th>Reel</th><th>Creator</th><th>Tags</th><th>Links</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for r in reels %}
+    <tr>
+      <td>
+        <a class="title" href="/reel/{{ r.id }}">{{ r.topic or r.source_url or ("Reel #" ~ r.id) }}</a>
+        {% if r.summary %}<div class="muted small clamp">{{ r.summary }}</div>{% endif %}
+        {% if r.status == "failed" and r.error %}<div class="err small clamp">Failed at {{ r.stage }}: {{ r.error }}</div>{% endif %}
+      </td>
+      <td>{{ "@" ~ r.creator if r.creator else "—" }}</td>
+      <td class="tags">{% for t in (r.tags or [])[:4] %}<span class="tag">{{ t }}</span>{% endfor %}</td>
+      <td>{{ (r.resources or [])|selectattr("url")|list|length }}</td>
+      <td><span class="badge {{ r.status }}">{% if r.id == current %}{{ r.stage or r.status }}…{% else %}{{ r.status }}{% endif %}</span></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if pages > 1 %}
+<nav class="pager" aria-label="Pages">
+  {% if page > 1 %}<a class="btn ghost small" href="/?q={{ q|urlencode }}&status={{ status }}&page={{ page - 1 }}">Previous</a>{% endif %}
+  <span class="muted small">Page {{ page }} of {{ pages }} · {{ total }} reels</span>
+  {% if page < pages %}<a class="btn ghost small" href="/?q={{ q|urlencode }}&status={{ status }}&page={{ page + 1 }}">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% elif q or status %}
+<div class="empty"><h2>No matches</h2><p class="muted">Nothing matches this search. Try fewer words or clear the status filter.</p></div>
+{% else %}
+<div class="empty">
+  <h2>The library is empty</h2>
+  <p class="muted">Paste a reel link above to file your first reel. Forwarded reels and Telegram links show up here too.</p>
+</div>
+{% endif %}

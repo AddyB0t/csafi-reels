@@ -1,0 +1,17 @@
+# INDEX - All reels catalog
+
+{{ reels|length }} reel{{ "" if reels|length == 1 else "s" }} filed. Newest first. Each entry lists the folder name, reel ID,
+creator, topic, summary, tags, resources found and files, so the whole library can be searched
+from this one file.
+
+{% for r in reels -%}
+## {{ r.folder_name }}
+- **Reel ID:** `{{ r.reel_key }}`{% if r.source_url %} · {{ r.source_url }}{% endif %}
+- **Creator:** {{ "@" ~ r.creator if r.creator else "unknown" }}
+- **Topic:** {{ r.topic }}
+- **Summary:** {{ r.summary }}
+- **Tags:** {{ (r.tags or [])|join(", ") or "none" }}
+- **Resources:** {% if r.resources %}{% for x in r.resources %}{{ x.name }}{% if x.url %} (<{{ x.url }}>){% endif %}{{ "; " if not loop.last }}{% endfor %}{% else %}none{% endif %}
+- **Files:** {{ (r.files or [])|join(" · ") }}
+
+{% endfor -%}

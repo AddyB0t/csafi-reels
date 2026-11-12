@@ -1,0 +1,414 @@
+<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>CSAFI Reels Library Bot - Project Proposal for Review</title><style>
+@page { size: A4; margin: 18mm 16mm; }
+body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+       color: #1f2328; line-height: 1.55; font-size: 10.5pt; max-width: 860px; margin: 32px auto; padding: 0 20px; }
+h1 { font-size: 22pt; margin: 0 0 4px; }
+h2 { font-size: 15pt; margin: 28px 0 8px; padding-bottom: 4px; border-bottom: 1px solid #d0d7de; }
+h3 { font-size: 11.5pt; margin: 18px 0 6px; }
+p, li { margin: 4px 0; }
+em { color: #59636e; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0 14px; font-size: 9.5pt; page-break-inside: avoid; }
+th, td { border: 1px solid #d0d7de; padding: 6px 8px; text-align: left; vertical-align: top; }
+th { background: #f6f8fa; font-weight: 600; }
+code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 9pt; background: #f6f8fa; padding: 1px 4px; border-radius: 4px; }
+pre { background: #f6f8fa; padding: 10px 12px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; }
+pre code { background: none; padding: 0; }
+blockquote { margin: 12px 0; padding: 8px 14px; border-left: 3px solid #0969da; background: #f3f8ff; color: #1f2328; }
+hr { border: none; border-top: 1px solid #d0d7de; margin: 20px 0; }
+h3 + p { margin-top: 2px; }
+</style></head><body><h1>CSAFI Reels Library Bot - Project Proposal for Review</h1>
+<p><em>4 November 2026</em></p>
+<p>An automation that turns Instagram reels shared by the CSAFI team into a searchable, AI-written content library in Google Drive, ready to recreate. This document explains how it works, what it costs to run, and what is needed to go live.</p>
+<table>
+<thead>
+<tr>
+<th>Key figure</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Running cost, free VPS plan, 10 reels/day</td>
+<td>~$8 / month</td>
+</tr>
+<tr>
+<td>Running cost, paid VPS plan, 10 reels/day</td>
+<td>~$20 / month</td>
+</tr>
+<tr>
+<td>AI cost per reel</td>
+<td>~$0.02</td>
+</tr>
+<tr>
+<td>Manual work per reel</td>
+<td>1 tap (forward)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>1. The goal</h2>
+<p>The CSAFI team shares useful reels in an Instagram group, but they get lost in the chat. Nobody has time to watch each one again, write down the hook and script, or find the links the creator mentioned. This project files every shared reel automatically into one Google Drive library, with a full breakdown and a recreation guide for each.</p>
+<h2>2. How it works</h2>
+<pre><code>Instagram (Business account) -&gt; Meta Webhook -&gt; Bot server (FastAPI on VPS) -&gt; OpenRouter (Gemini 2.5 Flash) -&gt; Google Drive (rclone) -&gt; Slack
+</code></pre>
+<p>End to end, a forwarded reel is filed in Drive in about 1 to 2 minutes.</p>
+<h3>Step 1 - A team member forwards the reel</h3>
+<p>In the CSAFI group, tap Share on a reel and send it to the company's Instagram Business account. This is the only manual step.</p>
+<ul>
+<li>Meta's API cannot read group chats, so the reel must arrive as a normal 1-on-1 DM to the Business account.</li>
+<li>A link pasted as text (<code>instagram.com/reel/...</code>) also works. The bot finds the link inside the message.</li>
+<li>Optional: an allow-list of sender IDs so only CSAFI team members can submit reels.</li>
+</ul>
+<h3>Step 2 - Meta sends a webhook to the bot</h3>
+<p>Within seconds, Meta posts the message to the bot's HTTPS address. The bot checks it is genuine and replies 200 OK at once.</p>
+<ul>
+<li>One-time setup: Meta calls <code>GET /webhook</code> with a challenge. The bot answers only if the verify token matches.</li>
+<li>Every message is signed by Meta with the <code>X-Hub-Signature-256</code> header (HMAC-SHA256 using the App Secret). Unsigned or wrongly signed requests are rejected.</li>
+<li>A shared reel arrives as an attachment of type <code>ig_reel</code> with a video link, the caption (title) and a <code>reel_video_id</code>.</li>
+<li>The bot saves the job in Postgres with status <code>queued</code> and returns immediately, so Meta never times out.</li>
+</ul>
+<h3>Step 3 - Duplicate check</h3>
+<p>The bot looks up the reel ID in the database. If the reel is already filed, it is skipped and nothing is charged.</p>
+<ul>
+<li>The <code>reel_video_id</code> (or the shortcode from a pasted link) is the unique key.</li>
+<li>Meta sometimes delivers the same webhook twice. The unique key makes this safe.</li>
+</ul>
+<h3>Step 4 - Download the video</h3>
+<p>A background worker downloads the video from the link Meta provided. If that fails, it tries yt-dlp. It retries twice before marking the reel failed.</p>
+<ul>
+<li>Meta's video links are temporary, so the download starts right away.</li>
+<li>ffprobe reads duration, resolution and frame rate for the format specs.</li>
+<li>ffmpeg makes a small 720p copy for the AI. The original stays untouched for Drive.</li>
+</ul>
+<h3>Step 5 - AI watches the reel</h3>
+<p>The small copy is sent to Google Gemini 2.5 Flash through OpenRouter. Gemini sees the frames and hears the audio in one request.</p>
+<ul>
+<li>Request: OpenRouter Chat Completions with a <code>video_url</code> part (base64 data URL), as documented by OpenRouter.</li>
+<li>The prompt asks for strict JSON: topic, creator, summary, hook, timed script, shot list, on-screen text, audio, caption and hashtags, call to action, format specs, recreation steps, resources, tags, uncertainties.</li>
+<li>The reply is validated against a schema. If it is invalid, the bot retries up to 2 times with the error attached.</li>
+<li>Rules in the prompt: never invent links or claims; list anything unclear under Uncertainties.</li>
+<li>Token usage and cost from OpenRouter are saved per reel, so spend is always visible.</li>
+<li>No Whisper, no frame extraction and no GPU needed. This keeps the server small and cheap.</li>
+</ul>
+<h3>Step 6 - Write the reel package</h3>
+<p>The bot turns the AI output into README, RESOURCES and MANIFEST files and gives the folder a clear name.</p>
+<ul>
+<li>Folder name format: <code>&lt;Topic&gt; - &lt;short description&gt; (@creator)</code>. No dates. Illegal characters removed.</li>
+<li>If a name already exists, a short descriptive phrase is added (never a number or date).</li>
+<li>The reel ID and URL go at the top of the README so anyone can trace it back.</li>
+</ul>
+<h3>Step 7 - Upload to Google Drive</h3>
+<p>rclone copies the folder into the library in Drive, then rebuilds the master INDEX file.</p>
+<ul>
+<li>rclone is a free, widely used sync tool. Google login is done once on the server.</li>
+<li>The upload is checked (file count and sizes) before the reel is marked filed.</li>
+<li><code>INDEX - All reels catalog.md</code> lists every reel in one file, so the whole library is searchable at once.</li>
+</ul>
+<h3>Step 8 - Notify and show in the dashboard</h3>
+<p>Slack gets a short message with the folder name and Drive link. The dashboard shows the reel as filed.</p>
+<ul>
+<li>On any failure, Slack gets an alert with the reel, the failed step and the error.</li>
+<li>The dashboard lists every reel with status, search, the rendered README, and a Retry button.</li>
+<li>Team members can also paste a reel link directly into the dashboard.</li>
+</ul>
+<blockquote>
+<p><strong>Why forwarding instead of reading the group:</strong> Meta's official API cannot read group chats. Forwarding to a Business account uses only official, approved APIs, so there is no risk of the Instagram account being banned for automation. No Instagram password is stored and no bot logs into Instagram.</p>
+</blockquote>
+<h3>Database (PostgreSQL)</h3>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>reels</code></td>
+<td>One row per reel: ID, source link, sender, status, folder name, topic, creator, tags, summary, AI output, cost</td>
+</tr>
+<tr>
+<td><code>reel_events</code></td>
+<td>Step-by-step log per reel (queued, downloaded, analysed, uploaded, failed) for the dashboard</td>
+</tr>
+<tr>
+<td><code>webhook_log</code></td>
+<td>Raw incoming webhooks (trimmed) for debugging, kept for 14 days</td>
+</tr>
+<tr>
+<td><code>llm_calls</code></td>
+<td>Model, tokens, cost and time per AI call. No personal data</td>
+</tr>
+</tbody>
+</table>
+<h3>Security</h3>
+<ul>
+<li>Every webhook is signature-checked with the Meta App Secret.</li>
+<li>HTTPS only, via Caddy and Let's Encrypt.</li>
+<li>Secrets live in an environment file on the server, never in code or logs.</li>
+<li>Dashboard behind a login token; never shows secrets.</li>
+<li>The bot never likes, follows, comments or sends DMs.</li>
+<li>AI and creator text is sanitised before it is shown in the dashboard.</li>
+</ul>
+<h2>3. What the team gets per reel</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>README - Full breakdown and recreation guide.md</td>
+<td>Hook, timed script, scene-by-scene shot list, audio, on-screen text, caption, CTA, format specs, step-by-step recreation guide</td>
+</tr>
+<tr>
+<td>RESOURCES - Creator links and repos.md</td>
+<td>Every real link, repo, tool or PDF mentioned, how to use it, and where it was found</td>
+</tr>
+<tr>
+<td>MANIFEST.md</td>
+<td>One line per file in the folder, with the reel ID and creator</td>
+</tr>
+<tr>
+<td>VIDEO - &lt;topic&gt;.mp4</td>
+<td>The original reel video</td>
+</tr>
+<tr>
+<td>INDEX - All reels catalog.md</td>
+<td>One searchable catalog of every reel in the library (root folder)</td>
+</tr>
+</tbody>
+</table>
+<p>Example folder: &quot;Audio8 TTS Voice Cloning - Open-source TTS repo walkthrough (@githubsignals)&quot;. No dates in names. Duplicates are detected and skipped.</p>
+<p><strong>Included</strong></p>
+<ul>
+<li>Instagram webhook receiver (official Meta API)</li>
+<li>Video download with automatic fallback</li>
+<li>AI breakdown of video, audio and on-screen text</li>
+<li>PostgreSQL database for status, search and cost tracking</li>
+<li>Google Drive sync and master INDEX</li>
+<li>Slack notifications for new reels and failures</li>
+<li>Web dashboard: search, status, add by link, retry</li>
+<li>Deployment on a VPS, setup guide and handover call</li>
+</ul>
+<p><strong>Not included</strong></p>
+<ul>
+<li>Automatic likes, follows, comments or DMs</li>
+<li>Reading the group chat directly (not allowed by Meta)</li>
+<li>Posting or scheduling content</li>
+<li>Video editing or content recreation itself</li>
+</ul>
+<h2>4. Milestones</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Milestone</th>
+<th>Deliverable</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>M1</td>
+<td>Core and pipeline</td>
+<td>Webhook server, Postgres database, download, AI analysis, file generation. Demo on sample reels.</td>
+</tr>
+<tr>
+<td>M2</td>
+<td>Drive, Slack and dashboard</td>
+<td>Google Drive sync, master INDEX, Slack alerts, web dashboard with search, manual add and retry.</td>
+</tr>
+<tr>
+<td>M3</td>
+<td>Go-live and handover</td>
+<td>Deploy to the VPS, connect the Meta app, live test, README and handover call.</td>
+</tr>
+</tbody>
+</table>
+<p>Each milestone is demoed and signed off before the next one starts.</p>
+<h2>5. VPS options</h2>
+<p>The bot needs a small always-on Linux server (VPS) so Meta can reach it. No GPU is needed.</p>
+<table>
+<thead>
+<tr>
+<th>VPS</th>
+<th style="text-align:right">Per month</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Oracle Cloud Always Free (Arm, up to 4 CPU / 24 GB)</td>
+<td style="text-align:right">$0</td>
+<td>Free forever, but Oracle can reclaim idle servers and sign-up capacity varies by region</td>
+</tr>
+<tr>
+<td>DigitalOcean Basic 1 GB / 1 CPU</td>
+<td style="text-align:right">$6</td>
+<td>Cheapest paid option; enough for a few reels a day</td>
+</tr>
+<tr>
+<td>DigitalOcean Basic 2 GB / 1 CPU</td>
+<td style="text-align:right">$12</td>
+<td>Recommended paid option; headroom for ffmpeg and the dashboard</td>
+</tr>
+<tr>
+<td>Hetzner Cloud CPX22 (2 CPU / 4 GB)</td>
+<td style="text-align:right">$23.59</td>
+<td>Strong option in Europe; prices rose in 2026</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommendation:</strong> start on Oracle Cloud Always Free ($0). If it is unavailable or unreliable, move to DigitalOcean 2 GB ($12/month). The move needs no code changes.</p>
+<h2>6. Monthly running costs</h2>
+<h3>Free VPS plan</h3>
+<table>
+<thead>
+<tr>
+<th>Service</th>
+<th>Basis</th>
+<th style="text-align:right">5 reels/day</th>
+<th style="text-align:right">10 reels/day</th>
+<th style="text-align:right">20 reels/day</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AI analysis (Gemini 2.5 Flash via OpenRouter)</td>
+<td>About $0.02 per reel</td>
+<td style="text-align:right">$3</td>
+<td style="text-align:right">$6</td>
+<td style="text-align:right">$12</td>
+</tr>
+<tr>
+<td>VPS (Oracle Cloud Always Free)</td>
+<td>Free tier</td>
+<td style="text-align:right">$0</td>
+<td style="text-align:right">$0</td>
+<td style="text-align:right">$0</td>
+</tr>
+<tr>
+<td>Database (PostgreSQL on Neon)</td>
+<td>Free tier, 0.5 GB</td>
+<td style="text-align:right">$0</td>
+<td style="text-align:right">$0</td>
+<td style="text-align:right">$0</td>
+</tr>
+<tr>
+<td>HTTPS (DuckDNS + Caddy + Let's Encrypt)</td>
+<td>Free</td>
+<td style="text-align:right">$0</td>
+<td style="text-align:right">$0</td>
+<td style="text-align:right">$0</td>
+</tr>
+<tr>
+<td>Google Drive storage</td>
+<td>15 GB free, then Google One 100 GB</td>
+<td style="text-align:right">$0</td>
+<td style="text-align:right">$2</td>
+<td style="text-align:right">$2</td>
+</tr>
+<tr>
+<td>Meta Instagram API, rclone, Slack</td>
+<td>Free</td>
+<td style="text-align:right">$0</td>
+<td style="text-align:right">$0</td>
+<td style="text-align:right">$0</td>
+</tr>
+<tr>
+<td><strong>Total per month</strong></td>
+<td></td>
+<td style="text-align:right"><strong>~$3</strong></td>
+<td style="text-align:right"><strong>~$8</strong></td>
+<td style="text-align:right"><strong>~$14</strong></td>
+</tr>
+</tbody>
+</table>
+<h3>Paid VPS plan (DigitalOcean 2 GB)</h3>
+<p>Same as above, plus $12/month for the VPS: about <strong>$15, $20 and $26 per month</strong> at 5, 10 and 20 reels a day.</p>
+<p><em>Source: OpenRouter list price for Gemini 2.5 Flash ($0.30 per million input tokens, $2.50 per million output tokens), Google's 263 tokens per second of video, DigitalOcean and Hetzner list prices. Assumes 60-second reels. Checked 4 Nov 2026, excluding taxes and OpenRouter's card top-up fee.</em></p>
+<h2>7. What is needed to go live</h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Instagram Business or Creator account</td>
+<td>Receives the forwarded reels</td>
+</tr>
+<tr>
+<td>Facebook Page linked to that account, and admin access to a Meta developer app</td>
+<td>Required by Meta to turn on the messaging webhook</td>
+</tr>
+<tr>
+<td>OpenRouter account with prepaid credit (from $10)</td>
+<td>Pays for the AI analysis</td>
+</tr>
+<tr>
+<td>VPS: Oracle Cloud account (card for identity check only) or DigitalOcean</td>
+<td>Hosts the bot</td>
+</tr>
+<tr>
+<td>Neon account (free)</td>
+<td>Hosts the PostgreSQL database</td>
+</tr>
+<tr>
+<td>Google account with the Drive folder for the library</td>
+<td>Where the library is stored</td>
+</tr>
+<tr>
+<td>Slack workspace and channel (optional)</td>
+<td>Receives notifications</td>
+</tr>
+</tbody>
+</table>
+<h2>8. Risks and how we handle them</h2>
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Group chats cannot be read by Meta's API</td>
+<td>Reels are forwarded to the Business account in a 1-on-1 DM. One tap per reel.</td>
+</tr>
+<tr>
+<td>Oracle can reclaim idle free servers</td>
+<td>A light daily job keeps it active. Fallback: DigitalOcean 2 GB for $12/month, no code changes.</td>
+</tr>
+<tr>
+<td>Free-tier limits change</td>
+<td>Postgres holds text only (videos live in Drive). Neon's free tier covers thousands of reels.</td>
+</tr>
+<tr>
+<td>Meta changes its webhook format</td>
+<td>Parsing lives in one module, so fixes are small and contained.</td>
+</tr>
+<tr>
+<td>A reel is private or deleted before download</td>
+<td>Marked failed, Slack alert, retry from the dashboard.</td>
+</tr>
+<tr>
+<td>AI output is wrong or incomplete</td>
+<td>Prompt forbids invented links; unclear items go under Uncertainties.</td>
+</tr>
+<tr>
+<td>AI prices change</td>
+<td>The model is a setting and can be switched without code changes.</td>
+</tr>
+</tbody>
+</table>
+<h2>9. Tech stack</h2>
+<p>Python and FastAPI on a Linux VPS · PostgreSQL on Neon · Meta Instagram Messaging API (webhooks) · OpenRouter with Google Gemini 2.5 Flash (video input) · yt-dlp and ffmpeg · rclone for Google Drive · Slack Web API · Caddy with Let's Encrypt for HTTPS.</p>
+<h2>Acceptance</h2>
+<p>The project is complete when a reel forwarded to the Business account appears in Google Drive as a named folder with README, RESOURCES, MANIFEST and video, the INDEX is updated, and a Slack message confirms it.</p>
+</body></html>
