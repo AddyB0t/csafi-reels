@@ -12,17 +12,15 @@ from .config import Settings
 from .db import DB, now
 from .download import download
 from .ocr import ocr_frames
-from .telegram import Telegram
 from .transcribe import transcribe
 
 log = logging.getLogger(__name__)
 
 
 class Pipeline:
-    def __init__(self, settings: Settings, db: DB, telegram: Telegram | None = None):
+    def __init__(self, settings: Settings, db: DB):
         self.s = settings
         self.db = db
-        self.tg = telegram or Telegram(settings.telegram_bot_token, settings.telegram_chat_id)
         self.analyser = Analyser(settings, log_llm=db.log_llm)
         self.index_lock = threading.Lock()
 
@@ -37,7 +35,11 @@ class Pipeline:
 
         work = self.s.work_dir / f"reel-{rid}"
         work.mkdir(parents=True, exist_ok=True)
+        if local_file is None and reel.get("local_path"):
+            local_file = Path(reel["local_path"])
         try:
+            if local_file is not None and not local_file.is_file():
+                raise FileNotFoundError(f"uploaded file is missing: {local_file}")
             # 1. download
             self.db.update(rid, status="downloading", stage=stage)
             emit("downloading")
@@ -49,7 +51,7 @@ class Pipeline:
             )
             emit(f"downloaded via {got.method}")
             caption = reel.get("caption") or got.meta.get("caption") or ""
-            creator = (got.meta.get("creator") or "").lstrip("@")
+            creator = (got.meta.get("creator") or reel.get("creator") or "").strip().lstrip("@")
             self.db.update(rid, video_sha256=got.sha256, caption=caption or None)
             dup = self.db.find_filed_by_sha(got.sha256, rid)
             if dup:
@@ -155,20 +157,12 @@ class Pipeline:
             if self.s.rclone_remote:
                 err = library.rclone_mirror(self.s.rclone_remote, self.s.library_dir, folder)
                 emit("mirrored to Google Drive" if not err else f"Drive mirror failed: {err}", "info" if not err else "warning")
-
-            links_found = sum(1 for r in resources if r.get("url"))
-            self.tg.send(
-                f"Filed: {folder}\nLinks found: {links_found}\nTook {time.monotonic() - started:.0f}s"
-                + ("\n(mock draft: start Ollama and retry for full AI)" if backend == "mock" else "")
-            )
             return self.db.get(rid)
 
         except Exception as e:  # noqa: BLE001 - every failure is recorded on the reel
             msg = f"{type(e).__name__}: {str(e)[:500]}"
             self.db.update(rid, status="failed", stage=stage, error=msg)
             emit(f"failed at {stage}: {msg}", "error")
-            src = reel.get("source_url") or reel.get("media_url") or reel["reel_key"]
-            self.tg.send(f"Reel #{rid} failed at step '{stage}'.\n{src}\n{msg[:300]}")
             return self.db.get(rid)
         finally:
             shutil.rmtree(work, ignore_errors=True)

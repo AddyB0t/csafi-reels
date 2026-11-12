@@ -1,6 +1,6 @@
 """CLI: python -m csafi_bot <command>
 
-  serve               dashboard + webhook + worker (+ Telegram intake if enabled)
+  serve               dashboard + worker
   run-one FILE|URL    process one video file or reel link now, print the folder
   add URL             queue a reel link (processed by a running `serve`)
   rebuild-index       regenerate INDEX - All reels catalog.md
@@ -63,7 +63,8 @@ def cmd_run_one(args) -> int:
     local = p if p.exists() else None
     if local:
         key = "file_" + hashlib.sha1(str(p.resolve()).encode()).hexdigest()[:16]
-        rid, _ = db.enqueue(reel_key=key, source="cli:file", source_url=None, caption=args.caption)
+        rid, _ = db.enqueue(reel_key=key, source="cli:file", source_url=None, local_path=str(p.resolve()),
+                            caption=args.caption)
     else:
         sc = links.instagram_shortcode(target)
         if not sc and not target.startswith("http"):
@@ -113,7 +114,6 @@ def cmd_rebuild_index(_args) -> int:
 def cmd_doctor(_args) -> int:
     from .config import get_settings
     from .ollama import Ollama
-    from .telegram import Telegram
 
     s = get_settings()
     results: list[tuple[str, bool | None, str]] = []
@@ -151,12 +151,6 @@ def cmd_doctor(_args) -> int:
         else:
             check("Ollama", False, f"not reachable at {s.ollama_url} (start: ollama serve)")
 
-    check("Meta verify token", bool(s.meta_verify_token) or None, "set" if s.meta_verify_token else "not set (webhook off)")
-    check("Meta app secret", bool(s.meta_app_secret) or None, "set" if s.meta_app_secret else "not set (webhook off)")
-    tg = Telegram(s.telegram_bot_token, s.telegram_chat_id)
-    status = tg.check()
-    check("Telegram", status.startswith("ok") if s.telegram_bot_token else None,
-          status + ("" if s.telegram_chat_id or not s.telegram_bot_token else ", TELEGRAM_CHAT_ID missing"))
     if s.rclone_remote:
         check("rclone", shutil.which("rclone") is not None, s.rclone_remote)
     free = shutil.disk_usage(s.data_dir).free / 1e9
@@ -176,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m csafi_bot", description="CSAFI Reels Library Bot")
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sp = sub.add_parser("serve", help="dashboard + webhook + worker")
+    sp = sub.add_parser("serve", help="dashboard + worker")
     sp.add_argument("--host")
     sp.add_argument("--port", type=int)
     sp.set_defaults(fn=cmd_serve)

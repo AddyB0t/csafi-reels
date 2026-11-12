@@ -14,6 +14,7 @@ SCHEMA = [
         source TEXT NOT NULL,
         source_url TEXT,
         media_url TEXT,
+        local_path TEXT,
         sender_id TEXT,
         caption TEXT,
         status TEXT NOT NULL DEFAULT 'queued',
@@ -48,15 +49,6 @@ SCHEMA = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_events_reel ON reel_events(reel_id)",
-    """
-    CREATE TABLE IF NOT EXISTS webhook_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        ts TEXT NOT NULL,
-        signature_ok INTEGER NOT NULL,
-        reels_found INTEGER NOT NULL,
-        body TEXT
-    )
-    """,
     """
     CREATE TABLE IF NOT EXISTS llm_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,6 +88,9 @@ class DB:
         with self.tx() as c:
             for stmt in SCHEMA:
                 c.execute(stmt)
+            cols = {r["name"] for r in c.execute("PRAGMA table_info(reels)")}
+            if "local_path" not in cols:
+                c.execute("ALTER TABLE reels ADD COLUMN local_path TEXT")
 
     def _conn(self) -> sqlite3.Connection:
         c = getattr(self._local, "conn", None)
@@ -142,8 +137,10 @@ class DB:
         source: str,
         source_url: str | None = None,
         media_url: str | None = None,
+        local_path: str | None = None,
         sender_id: str | None = None,
         caption: str | None = None,
+        creator: str | None = None,
     ) -> tuple[int, bool]:
         """Returns (reel_id, created). An existing reel is never re-queued here."""
         ts = now()
@@ -154,9 +151,9 @@ class DB:
                     c.execute("UPDATE reels SET media_url=?, updated_at=? WHERE id=?", (media_url, ts, row["id"]))
                 return row["id"], False
             cur = c.execute(
-                """INSERT INTO reels (reel_key, source, source_url, media_url, sender_id, caption,
-                   status, created_at, updated_at) VALUES (?,?,?,?,?,?, 'queued', ?, ?)""",
-                (reel_key, source, source_url, media_url, sender_id, caption, ts, ts),
+                """INSERT INTO reels (reel_key, source, source_url, media_url, local_path, sender_id, caption,
+                   creator, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?, 'queued', ?, ?)""",
+                (reel_key, source, source_url, media_url, local_path, sender_id, caption, creator, ts, ts),
             )
             return int(cur.lastrowid), True
 
@@ -254,14 +251,6 @@ class DB:
 
     def events(self, reel_id: int) -> list[dict[str, Any]]:
         return [dict(r) for r in self.q("SELECT * FROM reel_events WHERE reel_id=? ORDER BY id", (reel_id,))]
-
-    def log_webhook(self, body: str, signature_ok: bool, reels_found: int) -> None:
-        with self.tx() as c:
-            c.execute(
-                "INSERT INTO webhook_log (ts, signature_ok, reels_found, body) VALUES (?,?,?,?)",
-                (now(), int(signature_ok), reels_found, body[:8000]),
-            )
-            c.execute("DELETE FROM webhook_log WHERE ts < datetime('now', '-14 days')")
 
     def log_llm(
         self,

@@ -67,16 +67,5 @@ services:
               count: all
               capabilities: [gpu]
 
-  # Optional public HTTPS for the Meta webhook: docker compose --profile tunnel up -d
-  ngrok:
-    image: ngrok/ngrok:latest
-    profiles: ["tunnel"]
-    restart: unless-stopped
-    command: ["http", "--url=${NGROK_DOMAIN}", "bot:8765"]
-    environment:
-      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
-    depends_on:
-      - bot
-
 volumes:
   ollama:

@@ -4,13 +4,16 @@ Turns Instagram reels shared by the CSAFI team into a searchable library of fold
 each with a full breakdown and recreation guide. Everything runs on one machine with a local GPU.
 No paid APIs.
 
+This is the `no-meta` branch: no Meta webhook and no Telegram. You download a reel yourself and
+upload the video in the dashboard. Nothing needs a developer account.
+
 ```
-Forward a reel to the Business account ─┐
-Send a reel link to the Telegram bot ───┼─> queue (SQLite) -> worker, one reel at a time:
-Paste a link in the dashboard ──────────┘     download -> ffprobe -> Whisper transcript
-                                              -> key frames -> OCR -> vision model (Ollama)
-                                              -> text model (Ollama, strict JSON)
-                                              -> folder + INDEX -> Telegram message
+Upload a video in the dashboard ─┐
+Paste a public reel link ────────┴─> queue (SQLite) -> worker, one reel at a time:
+                                      ffprobe -> Whisper transcript
+                                      -> key frames -> OCR -> vision model (Ollama)
+                                      -> text model (Ollama, strict JSON)
+                                      -> folder + INDEX
 ```
 
 Each reel folder, named `<Topic> - <short description> (@creator)` (no dates):
@@ -31,8 +34,8 @@ Each reel folder, named `<Topic> - <short description> (@creator)` (no dates):
 - **Exact on-screen text comes from OCR** (RapidOCR), not the vision model, which misreads text.
 - **Video facts come from ffprobe** (duration, resolution, fps, aspect ratio).
 - **A comment keyword is checked** word for word against the caption and on-screen text.
-- **Duplicates are caught twice:** by reel ID/shortcode, and by a hash of the downloaded video
-  (catches the same reel arriving once as a forward and once as a pasted link).
+- **Duplicates are caught twice:** by reel shortcode or upload hash, and by a hash of the video
+  (catches the same reel arriving once as an upload and once as a pasted link).
 - **One model on the GPU at a time.** Whisper is freed before the vision model loads; each Ollama
   model is unloaded after use. Fits 8 GB VRAM.
 - **Never touches Instagram.** No login, no likes, follows, comments or DMs.
@@ -50,7 +53,18 @@ docker compose logs -f ollama-pull                   # first run: waits for the 
 docker compose exec bot python -m csafi_bot doctor   # every check should PASS
 ```
 
-Open <http://127.0.0.1:8765>. Paste a reel link to test. Files appear in `./data/library/`.
+Open <http://127.0.0.1:8765>. Files appear in `./data/library/`.
+
+## Add a reel
+
+1. Download the reel video to your computer (any downloader, or save it from your phone).
+2. In the dashboard, under **Upload a reel video**, pick the file.
+3. Optional but useful: paste the reel link, the creator handle and the caption. The caption is
+   where most links and hashtags come from.
+4. Press **Upload and file**. The reel shows in the list and files on its own.
+
+Uploaded videos are kept in `data/uploads/` so **Retry** works. Limit: `MAX_UPLOAD_MB` (500).
+Pasting a link also works for public reels, but Instagram often blocks downloads without login.
 
 No NVIDIA GPU? Run CPU-only (much slower):
 
@@ -91,37 +105,9 @@ Set them in `.env` (`VISION_MODEL`, `TEXT_MODEL`, `WHISPER_MODEL`). With Docker,
 changing `WHISPER_MODEL` (it is baked into the image) and re-run `docker compose up -d ollama-pull`
 after changing an Ollama model.
 
-## Connect Instagram (Meta webhook)
-
-Meta's API cannot read group chats, so team members forward reels in a normal DM to the company's
-Instagram Business account. Everything here is free and works in Development mode without app review.
-
-1. Switch the Instagram account to **Business** or **Creator** and link a Facebook Page.
-2. On <https://developers.facebook.com> create an app, add the **Instagram** product
-   (messaging), and connect the account.
-3. Give the bot a stable public HTTPS address (Meta must reach it):
-   - **ngrok** (free static domain): put `NGROK_AUTHTOKEN` and `NGROK_DOMAIN` in `.env`, then
-     `docker compose --profile tunnel up -d`.
-   - or **Tailscale Funnel** on the host: `tailscale funnel 8765`.
-   - Do not use Cloudflare quick tunnels: the URL changes on every restart.
-4. In the app's webhook settings set the callback URL to `https://<your-domain>/webhook` and the
-   verify token to `META_VERIFY_TOKEN`. Subscribe to the `messages` field.
-5. Put the App Secret in `META_APP_SECRET`. Every webhook is checked with it (`X-Hub-Signature-256`).
-6. Add each team member as a tester or role on the app, so their DMs trigger the webhook.
-7. Set `DASHBOARD_TOKEN` too, because the dashboard is now reachable through the tunnel.
-8. Forward a reel from a phone and watch it appear in the dashboard.
-
-## Telegram (alerts and link intake)
-
-1. Create a bot with [@BotFather](https://t.me/BotFather) and put the token in `TELEGRAM_BOT_TOKEN`.
-2. Set `TELEGRAM_INTAKE=true`, restart, send `/id` to your bot, and copy the chat ID into
-   `TELEGRAM_CHAT_ID` (and your user ID into `TELEGRAM_ALLOWED_USER_IDS`).
-3. The bot now messages you when a reel is filed or fails, and queues any reel link you send it.
-   Intake needs no public URL, so it works even before the Meta webhook is set up.
-
 ## Optional: mirror to Google Drive
 
-Run `rclone config` once and create a remote called `gdrive`. With Docker, copy the resulting
+Off by default. Run `rclone config` once and create a remote called `gdrive`. With Docker, copy the resulting
 `rclone.conf` into `./rclone/`. Then set `RCLONE_REMOTE=gdrive:CSAFI Reels Library`. Each filed reel
 folder and the INDEX are copied to Drive. The local folder stays the source of truth.
 
@@ -130,7 +116,6 @@ folder and the INDEX are copied to Drive. The local folder stays the source of t
 - Turn off sleep while plugged in (Windows: `powercfg /change standby-timeout-ac 0`).
 - Docker restarts the services after a reboot (`restart: unless-stopped`); enable "Start Docker
   Desktop when you sign in". Without Docker, add `start.bat` to Task Scheduler "At log on".
-- If the machine was off, Meta retries webhooks for a while. Paste any missed links in the dashboard.
 - Back up `data/csafi.db` with the library folder.
 
 ## Troubleshooting
@@ -140,8 +125,8 @@ folder and the INDEX are copied to Drive. The local folder stays the source of t
 | Dashboard says "Ollama not running" | Reels get a mock draft. Start Ollama, then press **Retry** on the reel |
 | `CUDA out of memory` in Ollama | Use a smaller model or lower `MAX_FRAMES` / `FRAME_WIDTH` |
 | Whisper errors about `libcudnn` | Set `WHISPER_DEVICE=cpu` |
-| Reel failed at `download` | The reel is private or deleted, or the Meta link expired. Paste the reel link and retry |
-| Webhook returns 403 | `META_APP_SECRET` is wrong, or the verify token does not match |
+| Reel failed at `download` | Instagram blocked the link download, or the reel is private. Download the video and upload it |
+| Upload says "bigger than ... MB" | Raise `MAX_UPLOAD_MB` in `.env` and restart |
 | Breakdown is weak | Try a bigger model, or edit the README by hand. Local 7-8B models are weaker than cloud ones |
 
 Logs: `data/logs/csafi.log`. Per-reel activity: the **Activity** tab on each reel page.
@@ -157,11 +142,10 @@ python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 
 ```
 csafi_bot/
-  app.py          FastAPI: webhook, dashboard, login, security headers
-  webhook.py      Meta signature check and payload parsing
+  app.py          FastAPI: dashboard, video upload, login, security headers
   pipeline.py     one reel end to end
   worker.py       single background worker
-  download.py     Meta CDN link, then yt-dlp fallback (never with cookies)
+  download.py     uploaded file, or yt-dlp for a link (never with cookies)
   media.py        ffprobe, proxy copy, scene detection, frames
   transcribe.py   faster-whisper, GPU with CPU fallback
   ocr.py          RapidOCR
@@ -170,7 +154,6 @@ csafi_bot/
   schema.py       Pydantic models for the AI output
   naming.py       folder naming rules
   library.py      write packages, INDEX, rclone mirror
-  telegram.py     alerts and link intake
   db.py           SQLite schema and queries
   templates/      reel markdown templates and dashboard pages
   static/         dashboard CSS and JS (no external requests)

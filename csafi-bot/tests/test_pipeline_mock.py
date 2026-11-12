@@ -38,6 +38,24 @@ def test_file_to_folder_and_duplicate(settings, tmp_path):
     assert out2["status"] == "duplicate" and out2["duplicate_of"] == rid
 
 
+def test_uploaded_file_from_queue(settings, tmp_path):
+    video = tmp_path / "up.mp4"
+    make_video(video)
+    db = DB(settings.db_path)
+    rid, _ = db.enqueue(reel_key="file_up", source="upload", local_path=str(video), creator="@maker",
+                        caption="Try linktr.ee/maker")
+    out = Pipeline(settings, db).process(db.get(rid))
+    assert out["status"] == "filed", out["error"]
+    assert out["folder_name"].endswith("(@maker)")
+
+
+def test_missing_upload_fails_cleanly(settings, tmp_path):
+    db = DB(settings.db_path)
+    rid, _ = db.enqueue(reel_key="file_gone", source="upload", local_path=str(tmp_path / "gone.mp4"))
+    out = Pipeline(settings, db).process(db.get(rid))
+    assert out["status"] == "failed" and "missing" in out["error"]
+
+
 def test_failure_is_recorded(settings):
     db = DB(settings.db_path)
     rid, _ = db.enqueue(reel_key="sc_none", source="test")

@@ -18,10 +18,7 @@ class Settings(BaseSettings):
     dashboard_token: str = ""
     run_worker: bool = True
 
-    # Meta webhook
-    meta_verify_token: str = ""
-    meta_app_secret: str = ""
-    allowed_sender_ids: str = ""
+    max_upload_mb: int = Field(500, ge=10, le=4096)
 
     # AI
     ai_backend: Literal["auto", "ollama", "mock"] = "auto"
@@ -41,12 +38,6 @@ class Settings(BaseSettings):
     max_frames: int = Field(14, ge=3, le=32)
     frame_width: int = Field(768, ge=256, le=1920)
     save_frames: bool = False
-
-    # Notifications / intake
-    telegram_bot_token: str = ""
-    telegram_chat_id: str = ""
-    telegram_intake: bool = False
-    telegram_allowed_user_ids: str = ""
 
     # Optional Drive mirror
     rclone_remote: str = ""
@@ -69,19 +60,15 @@ class Settings(BaseSettings):
         return self.data_dir / "logs"
 
     @property
+    def uploads_dir(self) -> Path:
+        return self.data_dir / "uploads"
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "csafi.db"
 
-    @property
-    def allowed_senders(self) -> set[str]:
-        return {s.strip() for s in self.allowed_sender_ids.split(",") if s.strip()}
-
-    @property
-    def telegram_allowed_users(self) -> set[str]:
-        return {s.strip() for s in self.telegram_allowed_user_ids.split(",") if s.strip()}
-
     def ensure_dirs(self) -> None:
-        for d in (self.data_dir, self.library_dir, self.work_dir, self.logs_dir):
+        for d in (self.data_dir, self.library_dir, self.work_dir, self.logs_dir, self.uploads_dir):
             d.mkdir(parents=True, exist_ok=True)
 
 

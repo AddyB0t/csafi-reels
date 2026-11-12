@@ -9,7 +9,7 @@
 <section class="hero">
   <div>
     <h1>Reel library</h1>
-    <p class="muted">Forward a reel to the Business account, send it to the Telegram bot, or paste the link here.</p>
+    <p class="muted">Upload a downloaded reel video below, or paste a public reel link.</p>
   </div>
   <form method="post" action="/add" class="add">
     <label class="sr-only" for="url">Instagram reel link</label>
@@ -17,6 +17,25 @@
     <button class="btn primary" type="submit">Add reel</button>
   </form>
 </section>
+
+<form method="post" action="/upload" enctype="multipart/form-data" class="card upload">
+  <h2>Upload a reel video</h2>
+  <div class="upload-grid">
+    <label>Video file (.mp4, .mov, .m4v)
+      <input name="video" type="file" accept=".mp4,.mov,.m4v,video/mp4,video/quicktime" required>
+    </label>
+    <label>Reel link (optional)
+      <input name="url" type="url" placeholder="https://www.instagram.com/reel/..." autocomplete="off">
+    </label>
+    <label>Creator handle (optional)
+      <input name="creator" type="text" placeholder="@creator" maxlength="31" autocomplete="off">
+    </label>
+    <label class="wide">Caption (optional, paste it for better links and tags)
+      <textarea name="caption" rows="3" maxlength="5000" placeholder="Paste the reel caption here"></textarea>
+    </label>
+  </div>
+  <button class="btn primary" type="submit">Upload and file</button>
+</form>
 
 {% if added %}
 {% set parts = added.split("-", 1) %}

@@ -11,8 +11,6 @@ def settings(tmp_path):
         ai_backend="mock",
         transcribe_enabled=False,
         ocr_enabled=False,
-        meta_verify_token="verify-me",
-        meta_app_secret="app-secret",
         run_worker=False,
     )
     s.ensure_dirs()

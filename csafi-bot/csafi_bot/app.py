@@ -1,16 +1,17 @@
+import hashlib
 import hmac
 import json
 import logging
 import math
+import os
 import secrets
 import shutil
-import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote_plus, urlparse
 
 import nh3
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -20,14 +21,14 @@ from . import __version__, library, links
 from .config import Settings, get_settings
 from .db import DB, STATUSES
 from .pipeline import Pipeline
-from .telegram import Telegram, start_intake
-from .webhook import parse_payload, verify_signature
 from .worker import Worker
 
 log = logging.getLogger(__name__)
 HERE = Path(__file__).parent
 COOKIE = "csafi_session"
 PAGE_SIZE = 25
+VIDEO_EXTS = {".mp4", ".mov", ".m4v"}
+MIN_VIDEO_BYTES = 10_000
 
 _md = MarkdownIt("commonmark", {"linkify": False}).enable("table")
 _ALLOWED_TAGS = {
@@ -51,10 +52,8 @@ def create_app(settings: Settings | None = None, start_background: bool | None =
     s = settings or get_settings()
     s.ensure_dirs()
     db = DB(s.db_path)
-    tg = Telegram(s.telegram_bot_token, s.telegram_chat_id)
-    pipeline = Pipeline(s, db, tg)
+    pipeline = Pipeline(s, db)
     worker = Worker(pipeline)
-    stop = threading.Event()
     background = s.run_worker if start_background is None else start_background
     session_secret = db.kv_get("session_secret") or secrets.token_urlsafe(32)
     db.kv_set("session_secret", session_secret)
@@ -72,10 +71,7 @@ def create_app(settings: Settings | None = None, start_background: bool | None =
     async def lifespan(_app: FastAPI):
         if background:
             worker.start()
-            if s.telegram_intake and s.telegram_bot_token:
-                start_intake(tg, s.telegram_allowed_users, queue_url, stop)
         yield
-        stop.set()
         worker.stop()
 
     app = FastAPI(title="CSAFI Reels Library Bot", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -90,13 +86,13 @@ def create_app(settings: Settings | None = None, start_background: bool | None =
     @app.middleware("http")
     async def guard(request: Request, call_next):
         path = request.url.path
-        public = path in ("/health", "/webhook", "/login") or path.startswith("/static/")
+        public = path in ("/health", "/login") or path.startswith("/static/")
         if s.dashboard_token and not public:
             if not hmac.compare_digest(request.cookies.get(COOKIE, ""), session_value()):
                 if path.startswith("/api/"):
                     return JSONResponse({"detail": "login required"}, status_code=401)
                 return RedirectResponse("/login", status_code=303)
-        if request.method == "POST" and path != "/webhook":
+        if request.method == "POST":
             origin = request.headers.get("origin") or request.headers.get("referer")
             if origin and urlparse(origin).netloc != request.headers.get("host"):
                 return PlainTextResponse("cross-site request blocked", status_code=403)
@@ -109,44 +105,10 @@ def create_app(settings: Settings | None = None, start_background: bool | None =
         resp.headers["Referrer-Policy"] = "no-referrer"
         return resp
 
-    # ---------- health / webhook ----------
+    # ---------- health ----------
     @app.get("/health")
     def health():
         return {"ok": True, "version": __version__}
-
-    @app.get("/webhook")
-    def webhook_verify(request: Request):
-        p = request.query_params
-        if (
-            p.get("hub.mode") == "subscribe"
-            and s.meta_verify_token
-            and hmac.compare_digest(p.get("hub.verify_token", ""), s.meta_verify_token)
-        ):
-            return PlainTextResponse(p.get("hub.challenge", ""))
-        raise HTTPException(403, "verification failed")
-
-    @app.post("/webhook")
-    async def webhook_receive(request: Request):
-        body = await request.body()
-        ok = verify_signature(s.meta_app_secret, body, request.headers.get("x-hub-signature-256"))
-        if not ok:
-            db.log_webhook(body.decode("utf-8", "replace"), False, 0)
-            raise HTTPException(403, "bad signature")
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            raise HTTPException(400, "invalid json")
-        items = parse_payload(payload, s.allowed_senders)
-        db.log_webhook(body.decode("utf-8", "replace"), True, len(items))
-        for it in items:
-            rid, created = db.enqueue(
-                reel_key=it.reel_key, source=it.source, source_url=it.source_url,
-                media_url=it.media_url, sender_id=it.sender_id, caption=it.caption,
-            )
-            db.event(rid, f"queued from {it.source}" if created else f"received again from {it.source}")
-        if items:
-            worker.notify()
-        return {"received": len(items)}
 
     # ---------- auth ----------
     @app.get("/login", response_class=HTMLResponse)
@@ -199,6 +161,55 @@ def create_app(settings: Settings | None = None, start_background: bool | None =
         if not found:
             return RedirectResponse("/?error=Paste+an+Instagram+reel+link+(instagram.com/reel/...)", status_code=303)
         rid, created = queue_url(found[0], "dashboard")
+        msg = "queued" if created else "already+in+library"
+        return RedirectResponse(f"/?added={rid}-{msg}", status_code=303)
+
+    def upload_error(text: str) -> RedirectResponse:
+        return RedirectResponse(f"/?error={quote_plus(text)}", status_code=303)
+
+    @app.post("/upload")
+    def upload(
+        video: UploadFile = File(...),
+        caption: str = Form(""),
+        creator: str = Form(""),
+        url: str = Form(""),
+    ):
+        suffix = Path(video.filename or "").suffix.lower()
+        if suffix not in VIDEO_EXTS:
+            return upload_error("Upload an .mp4, .mov or .m4v video file.")
+        limit = s.max_upload_mb * 1_048_576
+        tmp = s.uploads_dir / f".part-{secrets.token_hex(8)}"
+        h, size = hashlib.sha256(), 0
+        try:
+            with open(tmp, "wb") as f:
+                while chunk := video.file.read(1 << 20):
+                    size += len(chunk)
+                    if size > limit:
+                        break
+                    h.update(chunk)
+                    f.write(chunk)
+            if size > limit:
+                return upload_error(f"The video is bigger than {s.max_upload_mb} MB (MAX_UPLOAD_MB).")
+            if size < MIN_VIDEO_BYTES:
+                return upload_error("The file is too small to be a video.")
+            sha = h.hexdigest()
+            dest = s.uploads_dir / f"{sha}{suffix}"
+            os.replace(tmp, dest)
+        finally:
+            tmp.unlink(missing_ok=True)
+
+        found = links.find_instagram_links(url)
+        rid, created = db.enqueue(
+            reel_key=f"file_{sha[:16]}",
+            source="upload",
+            source_url=found[0] if found else None,
+            local_path=str(dest),
+            caption=caption.strip()[:5000] or None,
+            creator=creator.strip().lstrip("@")[:30] or None,
+        )
+        if created:
+            db.event(rid, f"uploaded {video.filename} ({size / 1_048_576:.1f} MB)")
+            worker.notify()
         msg = "queued" if created else "already+in+library"
         return RedirectResponse(f"/?added={rid}-{msg}", status_code=303)
 

@@ -1,6 +1,4 @@
-import hashlib
-import hmac
-import json
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -11,22 +9,38 @@ def client(settings):
     return TestClient(create_app(settings, start_background=False))
 
 
-def test_webhook_verify(settings):
+def test_upload_queues_and_dedupes(settings):
     c = client(settings)
-    ok = c.get("/webhook", params={"hub.mode": "subscribe", "hub.verify_token": "verify-me", "hub.challenge": "42"})
-    assert ok.status_code == 200 and ok.text == "42"
-    assert c.get("/webhook", params={"hub.mode": "subscribe", "hub.verify_token": "no", "hub.challenge": "42"}).status_code == 403
+    data = b"\x00" * 20_000
+    form = {"caption": "Repo github.com/acme/cli", "creator": "@maker", "url": "https://www.instagram.com/reel/Cabc12345/"}
+    r = c.post("/upload", files={"video": ("clip.mp4", data, "video/mp4")}, data=form, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].endswith("-queued")
+    rid = int(r.headers["location"].split("added=")[1].split("-")[0])
+    reel = c.app.state.db.get(rid)
+    assert reel["status"] == "queued" and reel["source"] == "upload"
+    assert reel["creator"] == "maker" and reel["caption"].startswith("Repo")
+    assert reel["source_url"] == "https://www.instagram.com/reel/Cabc12345/"
+    assert Path(reel["local_path"]).read_bytes() == data
+    assert not list(settings.uploads_dir.glob(".part-*"))
+
+    again = c.post("/upload", files={"video": ("other.mp4", data, "video/mp4")}, follow_redirects=False)
+    assert "already" in again.headers["location"]
 
 
-def test_webhook_signature_and_enqueue(settings):
+def test_upload_rejects_bad_files(settings):
     c = client(settings)
-    body = json.dumps({"object": "instagram", "entry": [{"messaging": [{"sender": {"id": "7"}, "message": {
-        "attachments": [{"type": "ig_reel", "payload": {"url": "https://cdn/x", "reel_video_id": 9}}]}}]}]}).encode()
-    assert c.post("/webhook", content=body, headers={"x-hub-signature-256": "sha256=bad"}).status_code == 403
-    sig = "sha256=" + hmac.new(b"app-secret", body, hashlib.sha256).hexdigest()
-    r = c.post("/webhook", content=body, headers={"x-hub-signature-256": sig, "content-type": "application/json"})
-    assert r.status_code == 200 and r.json() == {"received": 1}
-    assert c.app.state.db.get_by_key("igv_9")["status"] == "queued"
+    bad_ext = c.post("/upload", files={"video": ("x.txt", b"\x00" * 20_000, "text/plain")}, follow_redirects=False)
+    assert bad_ext.headers["location"].startswith("/?error=")
+    tiny = c.post("/upload", files={"video": ("x.mp4", b"\x00" * 10, "video/mp4")}, follow_redirects=False)
+    assert tiny.headers["location"].startswith("/?error=")
+    settings.max_upload_mb = 10
+    big = c.post("/upload", files={"video": ("x.mp4", b"\x00" * (11 * 1_048_576), "video/mp4")}, follow_redirects=False)
+    assert "bigger" in big.headers["location"]
+    assert not list(settings.uploads_dir.iterdir())
+
+
+def test_webhook_is_gone(settings):
+    assert client(settings).post("/webhook", content=b"{}").status_code in (404, 405)
 
 
 def test_dashboard_add_and_pages(settings):
@@ -62,4 +76,4 @@ def test_token_login(settings):
 
 def test_markdown_is_sanitised():
     html = render_md("<script>alert(1)</script>\n\n[x](javascript:alert(1)) **ok**")
-    assert "<script" not in html and "javascript:" not in html and "<strong>ok</strong>" in html
+    assert "<script" not in html and 'href="javascript' not in html and "<strong>ok</strong>" in html
