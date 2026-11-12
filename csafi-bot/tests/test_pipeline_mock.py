@@ -38,6 +38,18 @@ def test_file_to_folder_and_duplicate(settings, tmp_path):
     assert out2["status"] == "duplicate" and out2["duplicate_of"] == rid
 
 
+def test_load_audio_with_ffmpeg(tmp_path):
+    pytest.importorskip("numpy")
+    from csafi_bot.transcribe import SAMPLE_RATE, load_audio
+
+    video = tmp_path / "a.mp4"
+    make_video(video)
+    audio = load_audio(video)
+    assert audio.dtype.name == "float32"
+    assert abs(len(audio) / SAMPLE_RATE - 6) < 0.5
+    assert 0 < abs(audio).max() <= 1.0
+
+
 def test_uploaded_file_from_queue(settings, tmp_path):
     video = tmp_path / "up.mp4"
     make_video(video)

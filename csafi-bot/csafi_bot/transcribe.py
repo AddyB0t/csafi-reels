@@ -2,10 +2,31 @@
 GPU is empty again before the vision model loads."""
 import gc
 import logging
+import subprocess
 from pathlib import Path
 from typing import Any
 
+from .media import MediaError
+
 log = logging.getLogger(__name__)
+SAMPLE_RATE = 16000
+
+
+def load_audio(path: Path, sample_rate: int = SAMPLE_RATE):
+    """Mono float32 PCM via ffmpeg. faster-whisper's own PyAV decoder breaks on newer PyAV releases."""
+    import numpy as np
+
+    try:
+        out = subprocess.run(
+            ["ffmpeg", "-nostdin", "-v", "error", "-i", str(path), "-vn", "-f", "s16le", "-ac", "1",
+             "-ar", str(sample_rate), "-"],
+            capture_output=True, check=True, timeout=600,
+        )
+    except FileNotFoundError as e:
+        raise MediaError("ffmpeg is not installed or not on PATH") from e
+    except subprocess.CalledProcessError as e:
+        raise MediaError(f"ffmpeg could not read the audio: {e.stderr.decode('utf-8', 'replace')[-400:]}") from e
+    return np.frombuffer(out.stdout, np.int16).astype(np.float32) / 32768.0
 
 
 def _load(model_size: str, device: str):
@@ -27,10 +48,13 @@ def transcribe(path: Path, *, model_size: str = "small", device: str = "auto", l
     except ImportError:
         return {"language": None, "segments": [], "text": "", "note": "faster-whisper is not installed"}
 
+    audio = load_audio(path)
+    if audio.size == 0:
+        return {"language": None, "segments": [], "text": "", "device": "n/a"}
     model, used = _load(model_size, device)
     try:
         segments, info = model.transcribe(
-            str(path), language=language or None, vad_filter=True, beam_size=5, condition_on_previous_text=False
+            audio, language=language or None, vad_filter=True, beam_size=5, condition_on_previous_text=False
         )
         segs = [
             {"start": round(s.start, 1), "end": round(s.end, 1), "text": s.text.strip()}
