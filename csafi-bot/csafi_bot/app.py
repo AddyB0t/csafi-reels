@@ -48,6 +48,16 @@ def render_md(text: str) -> str:
     )
 
 
+def is_cross_site(request: Request) -> bool:
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        return site not in ("same-origin", "none")
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    if not origin or origin == "null":
+        return False
+    return urlparse(origin).netloc != request.headers.get("host")
+
+
 def create_app(settings: Settings | None = None, start_background: bool | None = None) -> FastAPI:
     s = settings or get_settings()
     s.ensure_dirs()
@@ -92,17 +102,15 @@ def create_app(settings: Settings | None = None, start_background: bool | None =
                 if path.startswith("/api/"):
                     return JSONResponse({"detail": "login required"}, status_code=401)
                 return RedirectResponse("/login", status_code=303)
-        if request.method == "POST":
-            origin = request.headers.get("origin") or request.headers.get("referer")
-            if origin and urlparse(origin).netloc != request.headers.get("host"):
-                return PlainTextResponse("cross-site request blocked", status_code=403)
+        if request.method == "POST" and is_cross_site(request):
+            return PlainTextResponse("cross-site request blocked", status_code=403)
         resp = await call_next(request)
         resp.headers["Content-Security-Policy"] = (
             "default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self'; "
             "script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         )
         resp.headers["X-Content-Type-Options"] = "nosniff"
-        resp.headers["Referrer-Policy"] = "no-referrer"
+        resp.headers["Referrer-Policy"] = "same-origin"
         return resp
 
     # ---------- health ----------

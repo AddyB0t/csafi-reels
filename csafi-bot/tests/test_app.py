@@ -60,6 +60,17 @@ def test_cross_site_post_blocked(settings):
     r = c.post("/add", data={"url": "https://www.instagram.com/reel/Cabc12345/"},
                headers={"origin": "https://evil.example"}, follow_redirects=False)
     assert r.status_code == 403
+    r = c.post("/add", data={"url": "https://www.instagram.com/reel/Cabc12345/"},
+               headers={"sec-fetch-site": "cross-site", "origin": "null"}, follow_redirects=False)
+    assert r.status_code == 403
+
+
+def test_same_origin_browser_post_allowed(settings):
+    c = client(settings)
+    r = c.post("/add", data={"url": "https://www.instagram.com/reel/Cabc12345/"},
+               headers={"sec-fetch-site": "same-origin", "origin": "null"}, follow_redirects=False)
+    assert r.status_code == 303
+    assert c.get("/").headers["referrer-policy"] == "same-origin"
 
 
 def test_token_login(settings):
