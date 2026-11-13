@@ -12,10 +12,35 @@
 {% if a.target_audience %}
 **Target audience:** {{ a.target_audience }}
 {% endif %}
+## Key points
+{% for p in a.key_points -%}
+{{ loop.index }}. {{ p }}
+{% else -%}
+_No key points were written._
+{% endfor %}
+## Tools, products and people named
+{% if a.tools_and_products -%}
+| Name | What it is | How the reel uses it | Where |
+| --- | --- | --- | --- |
+{% for t in a.tools_and_products -%}
+| {{ t.name|cell }} | {{ t.what_it_is|cell or "-" }} | {{ t.how_it_is_used|cell or "-" }} | {{ t.where_seen|cell or "-" }} |
+{% endfor %}
+{%- else -%}
+_None named._
+{% endif %}
 ## Hook (first 3 seconds)
-{{ a.hook or "_Not identified._" }}
+- **First words spoken:** {{ '"' ~ a.hook_line ~ '"' if a.hook_line else "none (no speech at the start)" }}
+- **First text on screen:** {{ '"' ~ a.hook_on_screen_text ~ '"' if a.hook_on_screen_text else "none" }}
 
-## Timed script
+{{ a.hook or "_No hook analysis was written._" }}
+
+## Why it works
+{% for w in a.why_it_works -%}
+- {{ w }}
+{% else -%}
+_Not analysed._
+{% endfor %}
+## Timed script (Whisper, exact)
 {% if a.timed_script -%}
 | Start | End | Line |
 | ---: | ---: | --- |
@@ -35,19 +60,34 @@ _No speech detected._
 {%- else -%}
 _No scenes listed._
 {% endif %}
+## On-screen text (OCR, exact)
+{% if ocr_lines -%}
+| Shown (s) | Text | Subtitle of speech |
+| --- | --- | --- |
+{% for ln in ocr_lines -%}
+| {{ "%.1f"|format(ln.t) }}{% if ln.get("end", ln.t) > ln.t %}-{{ "%.1f"|format(ln.end) }}{% endif %} | {{ ln.text|cell }} | {{ "yes" if ln.get("subtitle") else "" }} |
+{% endfor %}
+{%- else -%}
+_None detected._
+{% endif %}
 ## Audio
 - **Music:** {{ a.audio.music or "unknown" }}
 - **Voiceover:** {{ a.audio.voiceover or "unknown" }}
 - **Sound effects:** {{ a.audio.sfx or "none noted" }}
 {% if a.audio.notes %}- **Notes:** {{ a.audio.notes }}
 {% endif %}
-## On-screen text (OCR, exact)
-{% if ocr_lines -%}
-{% for ln in ocr_lines -%}
-- `{{ "%.1f"|format(ln.t) }}s` {{ ln.text }}
-{% endfor %}
-{%- else -%}
-_None detected._
+## Format and pacing
+| Aspect ratio | Duration | Resolution | FPS | Scenes |
+| --- | --- | --- | --- | --- |
+| {{ facts.aspect_ratio }} | {{ facts.duration_s }} s | {{ facts.resolution }} | {{ facts.fps }} | {{ pacing.get("scene_count") or "-" }} |
+
+| Average shot | Cuts per 10 s | Words spoken | Words per minute | Speech covers |
+| --- | --- | --- | --- | --- |
+| {{ pacing.get("avg_shot_s") ~ " s" if pacing.get("avg_shot_s") else "-" }} | {{ pacing.get("cuts_per_10s") if pacing.get("cuts_per_10s") is not none else "-" }} | {{ pacing.get("words_spoken") or 0 }} | {{ pacing.get("words_per_minute") or "-" }} | {{ pacing.get("speech_coverage_pct") or 0 }}% |
+
+- **Captions style:** {{ a.format_specs.captions_style or "not described" }}
+- **Pacing:** {{ a.format_specs.pacing or "not described" }}
+{% if a.format_specs.editing_techniques %}- **Editing techniques:** {{ a.format_specs.editing_techniques|join(", ") }}
 {% endif %}
 ## Caption and hashtags
 {{ a.caption_and_hashtags or caption or "_No caption available._" }}
@@ -57,11 +97,6 @@ _None detected._
 {% if a.call_to_action.keyword_if_any %}- **Keyword:** `{{ a.call_to_action.keyword_if_any }}`
 {% endif %}{% if a.call_to_action.exact_text %}- **Exact text:** "{{ a.call_to_action.exact_text }}"
 {% endif %}
-## Format specs
-| Aspect ratio | Duration | Resolution | FPS | Captions style | Pacing |
-| --- | --- | --- | --- | --- | --- |
-| {{ facts.aspect_ratio }} | {{ facts.duration_s }} s | {{ facts.resolution }} | {{ facts.fps }} | {{ a.format_specs.captions_style|cell or "-" }} | {{ a.format_specs.pacing|cell or "-" }} |
-
 ## How to recreate
 {% for step in a.how_to_recreate -%}
 {{ loop.index }}. {{ step }}

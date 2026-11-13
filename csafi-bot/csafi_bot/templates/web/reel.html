@@ -1,20 +1,25 @@
 {% extends "base.html" %}
 {% block title %}{{ r.topic or ("Reel #" ~ r.id) }} · CSAFI Reels Library{% endblock %}
 {% block content %}
-<p><a href="/" class="muted small">← All reels</a></p>
+{% set facts = a.get("facts") or {} %}
+{% set pacing = a.get("pacing") or {} %}
+{% set linked = (r.resources or [])|selectattr("url")|list %}
+<p class="back"><a href="/" class="muted small">← All reels</a></p>
 <section class="reel-head" data-reel="{{ r.id }}" data-status="{{ r.status }}">
   <div>
     <h1>{{ r.topic or ("Reel #" ~ r.id) }}</h1>
-    <p class="muted">
-      {% if r.creator %}@{{ r.creator }} · {% endif %}
-      {% if r.duration_s %}{{ r.duration_s }} s · {% endif %}
-      {% if r.processing_s %}processed in {{ r.processing_s|round|int }} s · {% endif %}
-      <code>{{ r.reel_key }}</code>
+    {% if r.summary %}<p class="lede">{{ r.summary }}</p>{% endif %}
+    <p class="meta small">
+      {% if r.creator %}<span>@{{ r.creator }}</span>{% endif %}
+      {% if r.duration_s %}<span>{{ r.duration_s }} s</span>{% endif %}
+      {% if r.processing_s %}<span>processed in {{ r.processing_s|round|int }} s</span>{% endif %}
+      <span><code>{{ r.reel_key }}</code></span>
+      {% for t in (r.tags or [])[:6] %}<span class="tag">{{ t }}</span>{% endfor %}
     </p>
-    {% if r.source_url %}<p class="small"><a href="{{ r.source_url }}" rel="noopener noreferrer" target="_blank">Open on Instagram</a></p>{% endif %}
   </div>
   <div class="actions">
     <span class="badge {{ r.status }}">{% if r.id == current %}{{ r.stage or r.status }}…{% else %}{{ r.status }}{% endif %}</span>
+    {% if r.source_url %}<a class="btn small" href="{{ r.source_url }}" rel="noopener noreferrer" target="_blank">Open on Instagram</a>{% endif %}
     {% if r.status in ("failed", "filed", "duplicate") %}
     <form method="post" action="/reel/{{ r.id }}/retry"><button class="btn small" type="submit">{{ "Retry" if r.status == "failed" else "Re-run" }}</button></form>
     {% endif %}
@@ -27,24 +32,60 @@
 <p class="alert">This is the same video as <a href="/reel/{{ r.duplicate_of }}">reel #{{ r.duplicate_of }}</a>, so it was not filed again.</p>
 {% elif r.status not in ("filed",) %}
 <p class="alert">This reel is being processed. This page refreshes on its own.</p>
+{% elif a.get("backend") == "mock" %}
+<p class="alert">This is a draft written without AI, because Ollama was not running. Start Ollama, then press <b>Re-run</b> for the full breakdown.</p>
 {% endif %}
 
 {% if folder %}
-<p class="muted small">Folder: <code>{{ folder }}</code></p>
-<div class="tabs" role="tablist">
-  <button role="tab" aria-selected="true" data-tab="readme">Breakdown</button>
-  <button role="tab" aria-selected="false" data-tab="resources">Resources</button>
-  {% if has_video %}<button role="tab" aria-selected="false" data-tab="video">Video</button>{% endif %}
-  <button role="tab" aria-selected="false" data-tab="manifest">Manifest</button>
-  <button role="tab" aria-selected="false" data-tab="activity">Activity</button>
+<div class="reel-grid">
+  <aside class="reel-aside">
+    {% if has_video %}
+    <video class="player" controls preload="metadata" src="/reel/{{ r.id }}/video"{% if has_thumb %} poster="/reel/{{ r.id }}/thumb"{% endif %}></video>
+    {% endif %}
+    <dl class="facts card">
+      {% if facts.get("resolution") %}<div><dt>Format</dt><dd>{{ facts.resolution }} · {{ facts.aspect_ratio }} · {{ facts.fps }} fps</dd></div>{% endif %}
+      {% if pacing.get("scene_count") %}<div><dt>Scenes</dt><dd>{{ pacing.scene_count }}, {{ pacing.avg_shot_s }} s average</dd></div>{% endif %}
+      {% if pacing.get("words_spoken") %}<div><dt>Speech</dt><dd>{{ pacing.words_spoken }} words{% if pacing.get("words_per_minute") %}, {{ pacing.words_per_minute }} per minute{% endif %}</dd></div>{% endif %}
+      <div><dt>Links found</dt><dd>{{ linked|length }}</dd></div>
+      <div><dt>Written by</dt><dd>{{ "Draft, no AI" if a.get("backend") == "mock" else "Local AI (Ollama)" }}</dd></div>
+    </dl>
+    {% if linked %}
+    <div class="card links">
+      <h2>Links</h2>
+      <ul>
+        {% for x in linked %}
+        <li><a href="{{ x.url }}" rel="noopener noreferrer nofollow" target="_blank">{{ x.name or x.url }}</a><span class="muted small">{{ x.kind }}{% if x.found_in %} · {{ x.found_in }}{% endif %}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    <p class="muted small folder">Folder<br><code>{{ folder }}</code></p>
+  </aside>
+
+  <section class="reel-docs">
+    <div class="tabs" role="tablist">
+      <button role="tab" aria-selected="true" data-tab="readme">Breakdown</button>
+      <button role="tab" aria-selected="false" data-tab="resources">Resources</button>
+      {% if has_storyboard %}<button role="tab" aria-selected="false" data-tab="storyboard">Storyboard</button>{% endif %}
+      <button role="tab" aria-selected="false" data-tab="manifest">Files</button>
+      <button role="tab" aria-selected="false" data-tab="activity">Activity</button>
+    </div>
+    <article class="panel md" data-panel="readme">{{ docs.readme|safe }}</article>
+    <article class="panel md" data-panel="resources" hidden>{{ docs.resources|safe }}</article>
+    {% if has_storyboard %}
+    <article class="panel" data-panel="storyboard" hidden>
+      <p class="muted small">Key frames in time order, left to right.</p>
+      <img class="storyboard" src="/reel/{{ r.id }}/storyboard" alt="Key frames of the reel in time order" loading="lazy">
+    </article>
+    {% endif %}
+    <article class="panel md" data-panel="manifest" hidden>{{ docs.manifest|safe }}</article>
+    <article class="panel" data-panel="activity" hidden>{% include "_events.html" %}</article>
+  </section>
 </div>
-<article class="panel md" data-panel="readme">{{ docs.readme|safe }}</article>
-<article class="panel md" data-panel="resources" hidden>{{ docs.resources|safe }}</article>
-{% if has_video %}<article class="panel" data-panel="video" hidden><video controls preload="metadata" src="/reel/{{ r.id }}/video"></video></article>{% endif %}
-<article class="panel md" data-panel="manifest" hidden>{{ docs.manifest|safe }}</article>
-<article class="panel" data-panel="activity" hidden>{% include "_events.html" %}</article>
 {% else %}
-<h2>Activity</h2>
-{% include "_events.html" %}
+<section class="card">
+  <h2>Activity</h2>
+  {% include "_events.html" %}
+</section>
 {% endif %}
 {% endblock %}

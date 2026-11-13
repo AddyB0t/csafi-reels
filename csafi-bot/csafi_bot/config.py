@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     vision_enabled: bool = True
     max_frames: int = Field(14, ge=3, le=32)
     frame_width: int = Field(768, ge=256, le=1920)
+    ocr_interval_s: float = Field(1.0, ge=0.25, le=10)
+    ocr_max_frames: int = Field(45, ge=4, le=120)
+    ocr_frame_width: int = Field(1080, ge=480, le=2160)
     save_frames: bool = False
 
     # Optional Drive mirror
@@ -64,11 +67,15 @@ class Settings(BaseSettings):
         return self.data_dir / "uploads"
 
     @property
+    def thumbs_dir(self) -> Path:
+        return self.data_dir / "thumbs"
+
+    @property
     def db_path(self) -> Path:
         return self.data_dir / "csafi.db"
 
     def ensure_dirs(self) -> None:
-        for d in (self.data_dir, self.library_dir, self.work_dir, self.logs_dir, self.uploads_dir):
+        for d in (self.data_dir, self.library_dir, self.work_dir, self.logs_dir, self.uploads_dir, self.thumbs_dir):
             d.mkdir(parents=True, exist_ok=True)
 
 

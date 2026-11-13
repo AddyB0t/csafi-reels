@@ -84,8 +84,8 @@ class Frame:
     path: Path
 
 
-def scene_times(path: Path) -> list[float]:
-    """Midpoints of detected scenes. Empty list when PySceneDetect is unavailable."""
+def detect_scenes(path: Path) -> list[tuple[float, float]]:
+    """(start, end) of each detected scene. Empty list when PySceneDetect is unavailable."""
     try:
         from scenedetect import ContentDetector, detect
     except ImportError:
@@ -94,7 +94,58 @@ def scene_times(path: Path) -> list[float]:
         scenes = detect(str(path), ContentDetector(threshold=27.0, min_scene_len=10))
     except Exception:  # noqa: BLE001 - fall back to interval sampling
         return []
-    return [round((s.get_seconds() + e.get_seconds()) / 2, 2) for s, e in scenes]
+    return [(round(s.get_seconds(), 2), round(e.get_seconds(), 2)) for s, e in scenes]
+
+
+def scene_midpoints(scenes: list[tuple[float, float]]) -> list[float]:
+    return [round((s + e) / 2, 2) for s, e in scenes]
+
+
+def pacing_stats(duration: float, scenes: list[tuple[float, float]], segments: list[dict[str, Any]]) -> dict[str, Any]:
+    """Measured editing and speech pace, so the model does not have to guess it."""
+    cuts = max(0, len(scenes) - 1)
+    speech_s = sum(max(0.0, s["end"] - s["start"]) for s in segments)
+    words = sum(len(s["text"].split()) for s in segments)
+    return {
+        "scene_count": len(scenes) or None,
+        "cuts": cuts if scenes else None,
+        "avg_shot_s": round(duration / len(scenes), 1) if scenes and duration else None,
+        "cuts_per_10s": round(cuts / duration * 10, 1) if scenes and duration else None,
+        "speech_coverage_pct": round(min(100.0, speech_s / duration * 100)) if duration else 0,
+        "words_spoken": words,
+        "words_per_minute": round(words / speech_s * 60) if speech_s >= 2 else None,
+    }
+
+
+def storyboard(frames: list["Frame"], dest: Path, tile_width: int = 240) -> Path | None:
+    """One grid image of the key frames. Returns None if ffmpeg cannot build it."""
+    if not frames:
+        return None
+    n = len(frames)
+    inputs: list[str] = []
+    for f in frames:
+        inputs += ["-i", str(f.path)]
+    scaled = ";".join(f"[{i}:v]scale={tile_width}:-2,setsar=1[v{i}]" for i in range(n))
+    if n == 1:
+        graph = f"{scaled};[v0]null[out]"
+    else:
+        stack = "".join(f"[v{i}]" for i in range(n))
+        graph = f"{scaled};{stack}xstack=inputs={n}:layout={_grid(n, min(n, 7))}:fill=black[out]"
+    try:
+        _run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", graph,
+              "-map", "[out]", "-frames:v", "1", "-q:v", "3", str(dest)], timeout=120)
+    except MediaError:
+        return None
+    return dest if dest.exists() else None
+
+
+def _grid(n: int, cols: int) -> str:
+    """xstack layout for n equal tiles, `cols` per row."""
+    cells = []
+    for i in range(n):
+        c, r = i % cols, i // cols
+        cells.append(f"{'+'.join(['w0'] * c) or '0'}_{'+'.join(['h0'] * r) or '0'}")
+    return "|".join(cells)
 
 
 def pick_times(duration: float, scenes: list[float], max_frames: int, interval: float = 2.5) -> list[float]:
@@ -114,6 +165,18 @@ def pick_times(duration: float, scenes: list[float], max_frames: int, interval: 
     if len(times) > max_frames:
         step = (len(times) - 1) / (max_frames - 1)
         times = [times[round(i * step)] for i in range(max_frames)]
+    return times
+
+
+def ocr_times(duration: float, interval: float = 1.0, max_frames: int = 60) -> list[float]:
+    """Dense, even sampling for on-screen text, which often shows for only a second or two."""
+    if duration <= 0:
+        return [0.0]
+    step = max(interval, duration / max_frames)
+    times, t = [], min(0.3, duration / 4)
+    while t < duration and len(times) < max_frames:
+        times.append(round(t, 2))
+        t += step
     return times
 
 

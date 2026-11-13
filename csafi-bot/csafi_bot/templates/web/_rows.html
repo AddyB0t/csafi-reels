@@ -1,24 +1,37 @@
 {% if reels %}
-<div class="table-wrap">
-<table class="reels">
-  <thead><tr><th>Reel</th><th>Creator</th><th>Tags</th><th>Links</th><th>Status</th></tr></thead>
-  <tbody>
+<ul class="reel-list">
   {% for r in reels %}
-    <tr>
-      <td>
-        <a class="title" href="/reel/{{ r.id }}">{{ r.topic or r.source_url or ("Reel #" ~ r.id) }}</a>
-        {% if r.summary %}<div class="muted small clamp">{{ r.summary }}</div>{% endif %}
-        {% if r.status == "failed" and r.error %}<div class="err small clamp">Failed at {{ r.stage }}: {{ r.error }}</div>{% endif %}
-      </td>
-      <td>{{ "@" ~ r.creator if r.creator else "—" }}</td>
-      <td class="tags">{% for t in (r.tags or [])[:4] %}<span class="tag">{{ t }}</span>{% endfor %}</td>
-      <td>{{ (r.resources or [])|selectattr("url")|list|length }}</td>
-      <td><span class="badge {{ r.status }}">{% if r.id == current %}{{ r.stage or r.status }}…{% else %}{{ r.status }}{% endif %}</span></td>
-    </tr>
+  {% set links = (r.resources or [])|selectattr("url")|list|length %}
+  <li class="reel-row">
+    <a class="thumb" href="/reel/{{ r.id }}" tabindex="-1" aria-hidden="true">
+      {% if r.id in thumbs %}<img src="/reel/{{ r.id }}/thumb" alt="" loading="lazy">{% endif %}
+    </a>
+    <div class="reel-main">
+      <a class="title" href="/reel/{{ r.id }}">{{ r.topic or r.source_url or ("Reel #" ~ r.id) }}</a>
+      {% if r.status == "failed" and r.error %}
+      <p class="err small clamp">Failed at {{ r.stage }}: {{ r.error }}</p>
+      {% elif r.status == "duplicate" %}
+      <p class="muted small clamp">Same video as reel #{{ r.duplicate_of }}. It was not filed again.</p>
+      {% elif r.status == "queued" %}
+      <p class="muted small clamp">Waiting in the queue.</p>
+      {% elif r.status != "filed" %}
+      <p class="muted small clamp">The bot is working on this reel now.</p>
+      {% elif r.summary %}
+      <p class="muted small clamp">{{ r.summary }}</p>
+      {% endif %}
+      {% if r.creator or r.duration_s or links or r.tags %}
+      <p class="meta small">
+        {% if r.creator %}<span>@{{ r.creator }}</span>{% endif %}
+        {% if r.duration_s %}<span>{{ r.duration_s|round|int }} s</span>{% endif %}
+        {% if links %}<span>{{ links }} link{{ "" if links == 1 else "s" }}</span>{% endif %}
+        {% for t in (r.tags or [])[:4] %}<span class="tag">{{ t }}</span>{% endfor %}
+      </p>
+      {% endif %}
+    </div>
+    <span class="badge {{ r.status }}">{% if r.id == current %}{{ r.stage or r.status }}…{% else %}{{ r.status }}{% endif %}</span>
+  </li>
   {% endfor %}
-  </tbody>
-</table>
-</div>
+</ul>
 {% if pages > 1 %}
 <nav class="pager" aria-label="Pages">
   {% if page > 1 %}<a class="btn ghost small" href="/?q={{ q|urlencode }}&status={{ status }}&page={{ page - 1 }}">Previous</a>{% endif %}
@@ -31,6 +44,6 @@
 {% else %}
 <div class="empty">
   <h2>The library is empty</h2>
-  <p class="muted">Upload a reel video or paste a reel link above to file your first reel.</p>
+  <p class="muted">Upload a reel video above to file your first reel.</p>
 </div>
 {% endif %}

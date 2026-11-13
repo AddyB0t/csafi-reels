@@ -2,6 +2,7 @@
 GPU is empty again before the vision model loads."""
 import gc
 import logging
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -42,7 +43,29 @@ def _load(model_size: str, device: str):
     return WhisperModel(model_size, device="cpu", compute_type="int8"), "cpu"
 
 
-def transcribe(path: Path, *, model_size: str = "small", device: str = "auto", language: str = "") -> dict[str, Any]:
+def hint_prompt(*texts: str, max_chars: int = 300) -> str:
+    """Likely names (capitalised words, words with digits, hashtags, handles) from the caption and
+    the screen, so Whisper spells tools and brands the way the creator does."""
+    words: list[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        for raw in re.findall(r"[#@]?[A-Za-z][\w.+-]{2,}", text or ""):
+            w = raw.lstrip("#@").rstrip(".")
+            is_name = raw[0] in "#@" or w[0].isupper() or any(c.isdigit() for c in w)
+            if is_name and w.lower() not in seen and not w.lower().startswith(("http", "www")):
+                seen.add(w.lower())
+                words.append(w)
+    out = ""
+    for w in words:
+        if len(out) + len(w) + 2 > max_chars:
+            break
+        out += (", " if out else "") + w
+    return f"Glossary: {out}." if out else ""
+
+
+def transcribe(
+    path: Path, *, model_size: str = "small", device: str = "auto", language: str = "", prompt: str = ""
+) -> dict[str, Any]:
     try:
         import faster_whisper  # noqa: F401
     except ImportError:
@@ -53,8 +76,10 @@ def transcribe(path: Path, *, model_size: str = "small", device: str = "auto", l
         return {"language": None, "segments": [], "text": "", "device": "n/a"}
     model, used = _load(model_size, device)
     try:
+        # The voice filter stays on: without it Whisper invents sentences over music-only reels.
         segments, info = model.transcribe(
-            audio, language=language or None, vad_filter=True, beam_size=5, condition_on_previous_text=False
+            audio, language=language or None, vad_filter=True, beam_size=5, condition_on_previous_text=False,
+            initial_prompt=prompt or None,
         )
         segs = [
             {"start": round(s.start, 1), "end": round(s.end, 1), "text": s.text.strip()}

@@ -1,41 +1,15 @@
 {% extends "base.html" %}
 {% block topright %}
 <div class="topright">
-  <span class="ai-status" id="ai-status" title="AI backend">{{ ai }}</span>
+  <span class="ai-status {{ 'ready' if ai.startswith('Ollama ready') else 'off' }}" id="ai-status" title="AI backend">{{ ai }}</span>
   {% if auth %}<form method="post" action="/logout"><button class="btn ghost small" type="submit">Sign out</button></form>{% endif %}
 </div>
 {% endblock %}
 {% block content %}
-<section class="hero">
-  <div>
-    <h1>Reel library</h1>
-    <p class="muted">Upload a downloaded reel video below, or paste a public reel link.</p>
-  </div>
-  <form method="post" action="/add" class="add">
-    <label class="sr-only" for="url">Instagram reel link</label>
-    <input id="url" name="url" type="url" required placeholder="https://www.instagram.com/reel/..." autocomplete="off">
-    <button class="btn primary" type="submit">Add reel</button>
-  </form>
+<section class="page-head">
+  <h1>Reel library</h1>
+  <p class="muted">Every reel the team saves, broken down and ready to recreate.</p>
 </section>
-
-<form method="post" action="/upload" enctype="multipart/form-data" class="card upload">
-  <h2>Upload a reel video</h2>
-  <div class="upload-grid">
-    <label>Video file (.mp4, .mov, .m4v)
-      <input name="video" type="file" accept=".mp4,.mov,.m4v,video/mp4,video/quicktime" required>
-    </label>
-    <label>Reel link (optional)
-      <input name="url" type="url" placeholder="https://www.instagram.com/reel/..." autocomplete="off">
-    </label>
-    <label>Creator handle (optional)
-      <input name="creator" type="text" placeholder="@creator" maxlength="31" autocomplete="off">
-    </label>
-    <label class="wide">Caption (optional, paste it for better links and tags)
-      <textarea name="caption" rows="3" maxlength="5000" placeholder="Paste the reel caption here"></textarea>
-    </label>
-  </div>
-  <button class="btn primary" type="submit">Upload and file</button>
-</form>
 
 {% if added %}
 {% set parts = added.split("-", 1) %}
@@ -44,24 +18,66 @@
 {% if error %}<p class="alert error" role="alert">{{ error }}</p>{% endif %}
 
 <section class="stats" aria-label="Library status" id="stats">
-  <div class="stat"><b data-count="filed">{{ counts.filed }}</b><span>Filed</span></div>
-  <div class="stat"><b data-count="active">{{ counts.queued + counts.downloading + counts.analysing + counts.writing }}</b><span>In queue</span></div>
-  <div class="stat"><b data-count="failed" class="{{ 'bad' if counts.failed else '' }}">{{ counts.failed }}</b><span>Failed</span></div>
-  <div class="stat"><b data-count="duplicate">{{ counts.duplicate }}</b><span>Duplicates skipped</span></div>
+  <div class="stat"><span>Filed</span><b data-count="filed">{{ counts.filed }}</b></div>
+  <div class="stat"><span>In queue</span><b data-count="active">{{ counts.queued + counts.downloading + counts.analysing + counts.writing }}</b></div>
+  <div class="stat"><span>Failed</span><b data-count="failed" class="{{ 'bad' if counts.failed else '' }}">{{ counts.failed }}</b></div>
+  <div class="stat"><span>Duplicates skipped</span><b data-count="duplicate">{{ counts.duplicate }}</b></div>
 </section>
 
-<form class="filters" method="get" action="/" id="filters">
-  <label class="sr-only" for="q">Search</label>
-  <input id="q" name="q" type="search" value="{{ q }}" placeholder="Search topic, creator, tags, links...">
-  <label class="sr-only" for="status">Status</label>
-  <select id="status" name="status">
-    <option value="">All statuses</option>
-    {% for st in statuses %}<option value="{{ st }}" {{ "selected" if st == status }}>{{ st|capitalize }}</option>{% endfor %}
-  </select>
-</form>
+<section class="card add" aria-labelledby="add-title">
+  <div class="card-head">
+    <h2 id="add-title">Add a reel</h2>
+    <p class="muted small">Download the reel to this computer, then upload the video file here.</p>
+  </div>
+  <form method="post" action="/upload" enctype="multipart/form-data" class="upload" data-upload>
+    <label class="drop" data-drop>
+      <input class="sr-only" name="video" type="file" accept=".mp4,.mov,.m4v,video/mp4,video/quicktime" required>
+      <span class="drop-icon" aria-hidden="true"></span>
+      <span class="drop-title" data-drop-title>Choose a video or drop it here</span>
+      <span class="drop-hint" data-drop-hint>MP4, MOV or M4V, up to {{ max_upload_mb }} MB</span>
+    </label>
+    <div class="fields">
+      <label class="field wide"><span>Caption <i>optional, but most links and hashtags come from it</i></span>
+        <textarea name="caption" rows="4" maxlength="5000" placeholder="Paste the reel caption here"></textarea>
+      </label>
+      <label class="field"><span>Reel link <i>optional</i></span>
+        <input name="url" type="url" placeholder="https://www.instagram.com/reel/..." autocomplete="off">
+      </label>
+      <label class="field"><span>Creator <i>optional</i></span>
+        <input name="creator" type="text" placeholder="@creator" maxlength="31" autocomplete="off">
+      </label>
+      <div class="form-foot wide">
+        <button class="btn primary" type="submit" data-submit>Upload and file</button>
+      </div>
+    </div>
+  </form>
+  <details class="alt">
+    <summary>Add a public reel by link instead</summary>
+    <form method="post" action="/add" class="link-form">
+      <label class="sr-only" for="url">Instagram reel link</label>
+      <input id="url" name="url" type="url" required placeholder="https://www.instagram.com/reel/..." autocomplete="off">
+      <button class="btn" type="submit">Add by link</button>
+    </form>
+    <p class="muted small">Instagram often blocks link downloads. If the reel fails at download, upload the video file.</p>
+  </details>
+</section>
 
-<div id="rows" data-src="/partials/reels?q={{ q|urlencode }}&status={{ status|urlencode }}&page={{ page }}">
-  {% include "_rows.html" %}
-</div>
+<section aria-labelledby="lib-title">
+  <div class="toolbar">
+    <h2 id="lib-title">All reels</h2>
+    <form class="filters" method="get" action="/" id="filters">
+      <label class="sr-only" for="q">Search</label>
+      <input id="q" name="q" type="search" value="{{ q }}" placeholder="Search topic, creator, tags, links">
+      <label class="sr-only" for="status">Status</label>
+      <select id="status" name="status">
+        <option value="">All statuses</option>
+        {% for st in statuses %}<option value="{{ st }}" {{ "selected" if st == status }}>{{ st|capitalize }}</option>{% endfor %}
+      </select>
+    </form>
+  </div>
+  <div id="rows" data-src="/partials/reels?q={{ q|urlencode }}&status={{ status|urlencode }}&page={{ page }}">
+    {% include "_rows.html" %}
+  </div>
+</section>
 <p class="muted small foot">Library folder: <code>{{ library_dir }}</code></p>
 {% endblock %}

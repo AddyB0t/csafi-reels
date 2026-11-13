@@ -55,6 +55,36 @@ def test_dashboard_add_and_pages(settings):
     assert "default-src 'self'" in c.get("/").headers["content-security-policy"]
 
 
+def test_reel_page_shows_filed_package(settings):
+    from csafi_bot import library
+    from csafi_bot.schema import ReelAnalysis
+
+    c = client(settings)
+    db = c.app.state.db
+    rid, _ = db.enqueue(reel_key="file_page", source="upload")
+    a = ReelAnalysis(title_topic="Voice cloning repo", one_line_summary="A repo clones voices.", overview="o",
+                     key_points=["It clones a voice from 5 seconds of audio."])
+    video = settings.data_dir / "v.mp4"
+    video.write_bytes(b"0" * 100)
+    board = settings.data_dir / "b.jpg"
+    board.write_bytes(b"jpg")
+    facts = {"duration_s": 30.0, "resolution": "1080x1920", "aspect_ratio": "9:16", "fps": 30.0}
+    ctx = {"a": a, "facts": facts, "pacing": {"scene_count": 4, "avg_shot_s": 7.5}, "reel_key": "file_page",
+           "reel_url": None, "caption": "", "resources": [], "ocr_lines": [], "backend": "mock", "transcript_lang": None}
+    library.write_package(settings.library_dir, "Voice Cloning Repo", ctx=ctx, video=video, storyboard=board)
+    (settings.thumbs_dir / f"{rid}.jpg").write_bytes(b"jpg")
+    db.update(rid, status="filed", folder_name="Voice Cloning Repo", topic=a.title_topic, summary=a.one_line_summary,
+              analysis={**a.model_dump(), "backend": "mock", "facts": facts, "pacing": ctx["pacing"]})
+
+    page = c.get(f"/reel/{rid}").text
+    assert "It clones a voice from 5 seconds of audio." in page and "4, 7.5 s average" in page
+    assert "draft written without AI" in page and 'data-tab="storyboard"' in page
+    assert c.get(f"/reel/{rid}/storyboard").content == b"jpg"
+    assert c.get(f"/reel/{rid}/thumb").content == b"jpg"
+    assert f'src="/reel/{rid}/thumb"' in c.get("/").text
+    assert c.get("/reel/999/thumb").status_code == 404
+
+
 def test_cross_site_post_blocked(settings):
     c = client(settings)
     r = c.post("/add", data={"url": "https://www.instagram.com/reel/Cabc12345/"},

@@ -32,6 +32,9 @@ def test_file_to_folder_and_duplicate(settings, tmp_path):
     assert (folder / library.README_NAME).exists()
     assert "https://github.com/acme/cli" in (folder / library.RESOURCES_NAME).read_text(encoding="utf-8")
     assert (settings.library_dir / library.INDEX_NAME).exists()
+    assert (folder / library.STORYBOARD_NAME).stat().st_size > 1000
+    assert (settings.thumbs_dir / f"{rid}.jpg").stat().st_size > 500
+    assert out["analysis"]["pacing"]["words_spoken"] == 0
 
     rid2, _ = db.enqueue(reel_key="file_b", source="test")
     out2 = p.process(db.get(rid2), local_file=video)

@@ -18,6 +18,40 @@ function setupFilters() {
   form.status.addEventListener("change", () => form.submit());
 }
 
+function setupUpload() {
+  const form = document.querySelector("[data-upload]");
+  if (!form) return;
+  const drop = form.querySelector("[data-drop]");
+  const input = drop.querySelector("input[type=file]");
+  const title = drop.querySelector("[data-drop-title]");
+  const hint = drop.querySelector("[data-drop-hint]");
+  const idle = { title: title.textContent, hint: hint.textContent };
+
+  const show = () => {
+    const file = input.files[0];
+    drop.classList.toggle("has-file", Boolean(file));
+    title.textContent = file ? file.name : idle.title;
+    hint.textContent = file ? `${(file.size / 1048576).toFixed(1)} MB. Click to choose another file.` : idle.hint;
+  };
+  input.addEventListener("change", show);
+  for (const name of ["dragenter", "dragover"]) {
+    drop.addEventListener(name, (e) => { e.preventDefault(); drop.classList.add("is-over"); });
+  }
+  for (const name of ["dragleave", "drop"]) {
+    drop.addEventListener(name, (e) => { e.preventDefault(); drop.classList.remove("is-over"); });
+  }
+  drop.addEventListener("drop", (e) => {
+    if (!e.dataTransfer.files.length) return;
+    input.files = e.dataTransfer.files;
+    show();
+  });
+  form.addEventListener("submit", () => {
+    const button = form.querySelector("[data-submit]");
+    button.disabled = true;
+    button.textContent = "Uploading…";
+  });
+}
+
 async function refreshList() {
   const rows = document.getElementById("rows");
   if (!rows) return;
@@ -30,7 +64,10 @@ async function refreshList() {
     set("failed", c.failed);
     set("duplicate", c.duplicate);
     const ai = document.getElementById("ai-status");
-    if (ai) ai.textContent = status.ai;
+    if (ai) {
+      ai.textContent = status.ai;
+      ai.classList.toggle("ready", status.ai.startsWith("Ollama ready"));
+    }
     const r = await fetch(rows.dataset.src);
     if (r.ok) rows.innerHTML = await r.text();
   } catch {
@@ -63,6 +100,7 @@ function setupReelRefresh() {
 
 localTimes();
 setupFilters();
+setupUpload();
 setupTabs();
 setupReelRefresh();
 if (document.getElementById("rows")) setInterval(refreshList, 5000);

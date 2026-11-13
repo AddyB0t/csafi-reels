@@ -15,6 +15,7 @@ INDEX_NAME = "INDEX - All reels catalog.md"
 README_NAME = "README - Full breakdown and recreation guide.md"
 RESOURCES_NAME = "RESOURCES - Creator links and repos.md"
 MANIFEST_NAME = "MANIFEST.md"
+STORYBOARD_NAME = "STORYBOARD - Key frames.jpg"
 
 
 def _cell(v: Any) -> str:
@@ -46,6 +47,7 @@ def write_package(
     ctx: dict[str, Any],
     video: Path,
     frames: list[tuple[int, str, Path]] | None = None,
+    storyboard: Path | None = None,
     replace_folder: str | None = None,
 ) -> Path:
     """Build the folder in a temp dir, then move it into place, so a crash never leaves half a package."""
@@ -56,8 +58,11 @@ def write_package(
         vname = video_file_name(ctx["a"].title_topic)
         _link_or_copy(video, tmp / vname)
         files.append({"name": vname, "desc": "Original reel video, full quality"})
-        files.append({"name": README_NAME, "desc": "Full breakdown: hook, script, shots, audio, CTA, specs, recreation steps"})
+        files.append({"name": README_NAME, "desc": "Full breakdown: key points, tools, hook, script, shots, audio, CTA, recreation steps"})
         files.append({"name": RESOURCES_NAME, "desc": "Every link, repo or tool found in the reel, and how to use it"})
+        if storyboard and storyboard.is_file():
+            shutil.copyfile(storyboard, tmp / STORYBOARD_NAME)
+            files.append({"name": STORYBOARD_NAME, "desc": "The key frames in one image, in time order"})
         for idx, label, path in frames or []:
             fname = f"FRAME {idx:02d} - {file_safe(label, 50)}.jpg"
             shutil.copyfile(path, tmp / fname)

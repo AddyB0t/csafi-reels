@@ -10,9 +10,11 @@ upload the video in the dashboard. Nothing needs a developer account.
 ```
 Upload a video in the dashboard ─┐
 Paste a public reel link ────────┴─> queue (SQLite) -> worker, one reel at a time:
-                                      ffprobe -> Whisper transcript
-                                      -> key frames -> OCR -> vision model (Ollama)
-                                      -> text model (Ollama, strict JSON)
+                                      ffprobe -> scenes -> key frames (full resolution)
+                                      -> OCR, one frame per second -> Whisper transcript
+                                      -> vision model on each key frame (Ollama)
+                                      -> text model, pass 1: what the reel teaches
+                                      -> text model, pass 2: how the reel is made
                                       -> folder + INDEX
 ```
 
@@ -21,7 +23,8 @@ Each reel folder, named `<Topic> - <short description> (@creator)` (no dates):
 | File | Contents |
 | --- | --- |
 | `VIDEO - <topic> reel original.mp4` | Original video |
-| `README - Full breakdown and recreation guide.md` | Hook, timed script, shot list, audio, exact on-screen text, caption, CTA, specs, steps to recreate, uncertainties |
+| `README - Full breakdown and recreation guide.md` | Overview, key points, tools named, hook, why it works, timed script, shot list, exact on-screen text, audio, pacing numbers, caption, CTA, steps to recreate, uncertainties |
+| `STORYBOARD - Key frames.jpg` | One picture with the key frames in time order |
 | `RESOURCES - Creator links and repos.md` | Every link found in the caption, on screen or spoken, where it was found and how to use it, plus gaps |
 | `MANIFEST.md` | File list with reel ID and creator |
 
@@ -32,7 +35,12 @@ Each reel folder, named `<Topic> - <short description> (@creator)` (no dates):
 - **Links come from code, not the AI.** URLs, handles and hashtags are pulled by regex from the
   caption, OCR and transcript. Any link the model makes up is removed and noted under Uncertainties.
 - **Exact on-screen text comes from OCR** (RapidOCR), not the vision model, which misreads text.
-- **Video facts come from ffprobe** (duration, resolution, fps, aspect ratio).
+  OCR reads one full-resolution frame per second, and marks text that is only a subtitle of the speech.
+- **The timed script is the Whisper transcript**, copied by code. The model does not retype it.
+- **Video facts come from ffprobe** (duration, resolution, fps, aspect ratio). **Pacing numbers**
+  (scenes, cuts, words per minute) are counted by code.
+- **Every field is required in the model's JSON grammar**, so a small model cannot skip sections.
+  A thin answer is sent back once for a second try.
 - **A comment keyword is checked** word for word against the caption and on-screen text.
 - **Duplicates are caught twice:** by reel shortcode or upload hash, and by a hash of the video
   (catches the same reel arriving once as an upload and once as a pasted link).
@@ -127,7 +135,9 @@ folder and the INDEX are copied to Drive. The local folder stays the source of t
 | Whisper errors about `libcudnn` | Set `WHISPER_DEVICE=cpu` |
 | Reel failed at `download` | Instagram blocked the link download, or the reel is private. Download the video and upload it |
 | Upload says "bigger than ... MB" | Raise `MAX_UPLOAD_MB` in `.env` and restart |
-| Breakdown is weak | Try a bigger model, or edit the README by hand. Local 7-8B models are weaker than cloud ones |
+| Script has wrong names or words | Set `WHISPER_MODEL=large-v3-turbo` (needs a GPU), rebuild, then press **Re-run** |
+| On-screen text is missed | Lower `OCR_INTERVAL_S` to `0.5`, or raise `OCR_MAX_FRAMES` for long reels |
+| Breakdown is weak | Paste the caption when you upload. Try a bigger model, or edit the README by hand. Local 7-8B models are weaker than cloud ones |
 
 Logs: `data/logs/csafi.log`. Per-reel activity: the **Activity** tab on each reel page.
 
@@ -146,10 +156,10 @@ csafi_bot/
   pipeline.py     one reel end to end
   worker.py       single background worker
   download.py     uploaded file, or yt-dlp for a link (never with cookies)
-  media.py        ffprobe, proxy copy, scene detection, frames
-  transcribe.py   faster-whisper, GPU with CPU fallback
-  ocr.py          RapidOCR
-  analyse.py      vision notes, structured synthesis, link enforcement, mock fallback
+  media.py        ffprobe, scene detection, frames, pacing numbers, storyboard
+  transcribe.py   faster-whisper, GPU with CPU fallback, glossary hint from caption and OCR
+  ocr.py          RapidOCR, text blocks with time ranges, subtitle marking
+  analyse.py      prompts, vision notes, two-pass synthesis, fact enforcement, mock fallback
   ollama.py       Ollama REST client
   schema.py       Pydantic models for the AI output
   naming.py       folder naming rules

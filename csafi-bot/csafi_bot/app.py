@@ -148,6 +148,7 @@ def create_app(settings: Settings | None = None, start_background: bool | None =
             "reels": rows, "total": total, "q": q, "status": status, "page": page,
             "pages": max(1, math.ceil(total / PAGE_SIZE)), "statuses": STATUSES,
             "counts": db.counts(), "current": worker.current,
+            "thumbs": {r["id"] for r in rows if (s.thumbs_dir / f"{r['id']}.jpg").is_file()},
         }
 
     @app.get("/", response_class=HTMLResponse)
@@ -155,7 +156,7 @@ def create_app(settings: Settings | None = None, start_background: bool | None =
         ctx = list_ctx(q, status, page)
         ctx.update(
             added=added, error=error, ai=pipeline.analyser.backend_label(),
-            auth=bool(s.dashboard_token), library_dir=str(s.library_dir),
+            auth=bool(s.dashboard_token), library_dir=str(s.library_dir), max_upload_mb=s.max_upload_mb,
         )
         return templates.TemplateResponse(request, "index.html", ctx)
 
@@ -248,8 +249,10 @@ def create_app(settings: Settings | None = None, start_background: bool | None =
         has_video = bool(folder and any(folder.glob("VIDEO - *.mp4")))
         return templates.TemplateResponse(
             request, "reel.html",
-            {"r": r, "docs": docs, "events": db.events(reel_id), "folder": str(folder) if folder else "",
-             "has_video": has_video, "current": worker.current},
+            {"r": r, "a": r["analysis"] if isinstance(r.get("analysis"), dict) else {},
+             "docs": docs, "events": db.events(reel_id), "folder": str(folder) if folder else "",
+             "has_video": has_video, "has_storyboard": bool(folder and (folder / library.STORYBOARD_NAME).is_file()),
+             "has_thumb": (s.thumbs_dir / f"{reel_id}.jpg").is_file(), "current": worker.current},
         )
 
     @app.get("/reel/{reel_id}/video")
@@ -259,6 +262,20 @@ def create_app(settings: Settings | None = None, start_background: bool | None =
         if not vids:
             raise HTTPException(404, "no video")
         return FileResponse(vids[0], media_type="video/mp4")
+
+    @app.get("/reel/{reel_id}/storyboard")
+    def reel_storyboard(reel_id: int):
+        folder = folder_path(get_reel(reel_id))
+        if not folder or not (folder / library.STORYBOARD_NAME).is_file():
+            raise HTTPException(404, "no storyboard")
+        return FileResponse(folder / library.STORYBOARD_NAME, media_type="image/jpeg")
+
+    @app.get("/reel/{reel_id}/thumb")
+    def reel_thumb(reel_id: int):
+        path = s.thumbs_dir / f"{reel_id}.jpg"
+        if not path.is_file():
+            raise HTTPException(404, "no thumbnail")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=300"})
 
     @app.post("/reel/{reel_id}/retry")
     def retry(reel_id: int):

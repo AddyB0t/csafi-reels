@@ -9,8 +9,10 @@
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="/">CSAFI <span>Reels Library</span></a>
-    {% block topright %}{% endblock %}
+    <div class="top-inner">
+      <a class="brand" href="/"><span class="logo" aria-hidden="true"></span><b>CSAFI</b><span>Reels Library</span></a>
+      {% block topright %}{% endblock %}
+    </div>
   </header>
   <main class="wrap">
     {% block content %}{% endblock %}
